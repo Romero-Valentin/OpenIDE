@@ -1,0 +1,49 @@
+-- Base principle
+OpenIDE allows FPGA engineers to connect VHDL modules together with an IDE.
+The user opens a software window. On this window, the user can add VHDL modules and wire them together.
+This means the software allows the designer to create structural FPGA designs.
+On the top is a tool-bar that enables the user to choose between 
+-> Open project
+-> Save project
+-> Select object
+-> Draw wire
+-> Import VHDL module
+The tool-bar shows the different options with a small icon comming from PNG. When the mouse hovers on the icon for 0.5s, a small text bubble appears to explain what the icon does.
+
+When pressing escape, any action should be cancelled.
+When pressing CTRL+Z, reverse action as many times as possible during the current session.
+When pressing SUPPR, delete the module or wire.
+
+-- Drawing content
+Each VHDL module added is a green bloc, with the name and the ports (in/out) and their types.
+Each wire between modules is a signal (std_logic, std_logic_vector, etc...)
+Ports (in/out) of the structural are blue arrows, pointing to the wire for input, pointing out of the wire for outputs.
+The wires are not automatically connected between modules. The user clicks somewhere, and can draw lines with 90° angles. 
+Each wire is saved as a list of coordinates to retrace the whole wire. 
+Coordinates for wires and modules are integer only.
+The wires are not free to be placed anywhere, it can only be place on positions multiple of 100. Each position multiple of 100 has a small, furtive point that acts like a grid.
+When select-object is chosen from the tool-bar, user can move the whole wire if he does not select a node, or he can move a single node if he selects a node.
+
+-- Drawing format
+The format is draw in vector, with high performance in mind.
+User can zoom and unzoom.
+User can move with arrow-keys.
+
+-- Compatiblity
+The software should generate highly Git compatible files.
+This means, that everything saved must be text-based, easy to understand, easy to understand commits, easy to merge.
+
+-- Upgradability
+The software must absolutely not be monolitic. It must be flexible, upgradable.
+The code must be perfectly partitioned. This will allow the developer to change / upgrade the application on the long term.
+
+-- Log
+Software must be highly debuggable. There should be tracking of the software behavior inside logs, as well as every input from the user detected by the software.
+
+-- Menus
+There are multiple menus available.
+- 1st menu : Open a project, options, and keep space for future.
+- 2nd menu : Draw a structural designer
+- 3rd menu : Keep empty
+
+

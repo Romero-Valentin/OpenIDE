@@ -1,0 +1,66 @@
+
+UI Frameworks for OpenIDE (Python)
+
+1. Tkinter
+	 Pros:
+		 - Built-in with Python, no extra install
+		 - Simple, easy for basic UIs
+		 - Good documentation and community
+		 - Lightweight
+	 Cons:
+		 - Limited modern widgets
+		 - Basic look and feel
+		 - Not ideal for complex vector graphics
+
+2. PyQt (PyQt5/PyQt6)
+	 Pros:
+		 - Rich set of widgets and features
+		 - Modern, professional look
+		 - Powerful graphics (QGraphicsView)
+		 - Good for complex UIs and vector drawing
+	 Cons:
+		 - Requires installation (not built-in)
+		 - GPL/commercial license for some uses
+		 - Larger package size
+
+3. wxPython
+	 Pros:
+		 - Native look on all platforms
+		 - Good widget selection
+		 - Decent graphics support
+	 Cons:
+		 - Requires installation
+		 - Documentation less extensive than PyQt
+		 - Less popular than PyQt/Tkinter
+
+4. Kivy
+	 Pros:
+		 - Designed for touch/mobile and desktop
+		 - Good for custom graphics and layouts
+		 - Open source, flexible
+	 Cons:
+		 - Non-native look
+		 - Learning curve for custom widgets
+		 - Not ideal for traditional desktop UIs
+
+5. DearPyGui
+	 Pros:
+		 - Fast, GPU-accelerated
+		 - Good for custom and vector graphics
+		 - Simple API
+	 Cons:
+		 - Limited standard widgets
+		 - Non-native look
+		 - Newer, smaller community
+
+6. PySide (Qt for Python)
+	 Pros:
+		 - Official Qt bindings
+		 - Similar to PyQt, but LGPL license
+		 - Rich widgets and graphics
+	 Cons:
+		 - Requires installation
+		 - Larger package size
+
+Summary:
+For OpenIDE, PyQt/PySide are best for complex, modern, vector-based UIs. Tkinter is easiest for simple prototypes. Kivy and DearPyGui are good for custom graphics. wxPython offers native look but less vector support.

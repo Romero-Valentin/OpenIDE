@@ -1,0 +1,71 @@
+2.4 Tool-Bar & Object Selection
+	- A tool-bar is present at the top of the window, allowing the user to:
+		-> Open project
+		-> Save project
+		-> Select object
+		-> Draw wire
+		-> Import VHDL module
+	- Each tool-bar option is shown with a small PNG icon.
+	- When the mouse hovers over an icon for 0.5s, a text bubble appears explaining the icon's function.
+	- When 'Select object' is chosen, the user can:
+		- Move the whole wire if no node is selected.
+		- Move a single node if a node is selected.
+OpenIDE Software Specification
+
+1. Overview
+OpenIDE is an IDE for FPGA engineers to visually connect VHDL modules, enabling the creation of structural FPGA designs. The application provides a graphical interface for adding modules, wiring signals, and managing project files. The user opens a software window to add VHDL modules and wire them together.
+
+2. Functional Requirements
+2.1 Module Management
+	- Users can add, remove, and configure VHDL modules.
+	- Each module is displayed as a green block with its name and ports (in/out, type).
+	- Module coordinates are integer only.
+2.2 Wiring & Signals
+	- Users can wire modules together using signals (std_logic, std_logic_vector, etc.).
+	- Ports are visualized as blue arrows (input: pointing to wire, output: pointing away).
+	- Wires are drawn manually by the user, with 90° angles.
+	- Each wire is saved as a list of integer coordinates to retrace the wire.
+	- Wires can only be placed at positions that are multiples of 100.
+	- Each position multiple of 100 has a small, furtive point that acts as a grid.
+	- Wires are not automatically connected; user interaction is required.
+2.3 Menus
+	- 1st menu: Open a project, options, and space for future features.
+	- 2nd menu: Draw a structural designer.
+	- 3rd menu: Reserved/empty for future expansion.
+
+3. Technical Requirements
+3.1 Drawing & Performance
+	- All graphics are vector-based for high performance and scalability.
+	- Drawing format is optimized for vector operations.
+	- User can zoom and unzoom the workspace for detailed or overview editing.
+3.2 File Format & Git Compatibility
+	- All saved files are text-based, human-readable, and optimized for Git version control (easy to merge, track, and understand).
+	- File formats are designed for easy commit, merge, and review.
+3.3 Code Architecture
+	- The codebase must be modular, partitioned, and non-monolithic to ensure flexibility and upgradability.
+	- Clear separation of concerns between UI, logic, and data handling.
+	- Partitioned code allows independent upgrades and changes.
+
+4. Logging & Debugging
+	- Comprehensive logging of software behavior and user actions.
+	- Logs must facilitate debugging and traceability.
+	- Every user input and software event is tracked in logs for high debuggability.
+
+5. Extensibility & Upgradability
+	- The application must be designed for easy upgrades and feature additions.
+	- Partitioned code structure to allow independent module updates.
+	- The code must not be monolithic, ensuring long-term flexibility.
+
+6. User Experience
+	- Intuitive interface for module placement, wiring, and project management.
+	- Visual clarity and responsiveness prioritized.
+	- User interaction for drawing wires and placing modules is clear and direct.
+	- User can move the workspace view using arrow keys for navigation.
+	- Pressing Escape cancels any ongoing action (drawing, moving, etc).
+	- Pressing CTRL+Z reverses actions (undo) as many times as possible during the session.
+	- Pressing SUPPR (Delete) deletes the selected module or wire.
+
+7. Future Considerations
+	- Menu and feature placeholders for future growth.
+	- Maintain documentation and code comments for maintainability.
+	- Maintain documentation and code comments for maintainability.
