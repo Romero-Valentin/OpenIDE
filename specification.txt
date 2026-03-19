@@ -1,49 +1,90 @@
--- Base principle
-OpenIDE allows FPGA engineers to connect VHDL modules together with an IDE.
-The user opens a software window. On this window, the user can add VHDL modules and wire them together.
-This means the software allows the designer to create structural FPGA designs.
-On the top is a tool-bar that enables the user to choose between 
--> Open project
--> Save project
--> Select object
--> Draw wire
--> Import VHDL module
-The tool-bar shows the different options with a small icon comming from PNG. When the mouse hovers on the icon for 0.5s, a small text bubble appears to explain what the icon does.
+OpenIDE Software Specification
 
-When pressing escape, any action should be cancelled.
-When pressing CTRL+Z, reverse action as many times as possible during the current session.
-When pressing SUPPR, delete the module or wire.
+1. Overview
+OpenIDE is an IDE for FPGA engineers to visually connect VHDL modules, enabling the creation of structural FPGA designs. 
+The application provides a graphical interface for adding modules, wiring signals, and managing project files. The user opens a software window to add VHDL modules and wire them together.
 
--- Drawing content
-Each VHDL module added is a green bloc, with the name and the ports (in/out) and their types.
-Each wire between modules is a signal (std_logic, std_logic_vector, etc...)
-Ports (in/out) of the structural are blue arrows, pointing to the wire for input, pointing out of the wire for outputs.
-The wires are not automatically connected between modules. The user clicks somewhere, and can draw lines with 90° angles. 
-Each wire is saved as a list of coordinates to retrace the whole wire. 
-Coordinates for wires and modules are integer only.
-The wires are not free to be placed anywhere, it can only be place on positions multiple of 100. Each position multiple of 100 has a small, furtive point that acts like a grid.
-When select-object is chosen from the tool-bar, user can move the whole wire if he does not select a node, or he can move a single node if he selects a node.
+2. Functional Requirements
+2.1 Module Management
+	- Users can add, remove, and configure VHDL modules.
+	- Each module is displayed as a green block with its name and ports (in/out, type).
+	- Module coordinates are integer only.
+2.2 Grid
+	- Each position that is a multiple of 100 displays a small, furtive dot acting as a snap grid.
+	- The grid is dynamically generated based on the current viewport (only visible grid points are drawn) to maintain high performance.
+2.3 Wiring & Signals
+	- Each wire between modules represents a signal (std_logic, std_logic_vector, etc.).
+	- Ports are visualized as blue arrows (input: pointing to the wire, output: pointing out of the wire).
+	- Wires are drawn manually: the user clicks to start, then draws lines with 90° angles.
+	- Each wire is saved as a list of integer coordinates to retrace the whole wire.
+	- Wires can only be placed at positions that are multiples of 100.
+	- Wires are not automatically connected; user interaction is required.
+2.4 VHDL Block (Module)
+	- Each block has a library attribute, defaulted to "work".
+	- Each block has an entity name inherited from the VHDL entity declaration.
+	- Each block has a user-defined instance name, defaulted to "U_N" where N is the lowest integer (starting from 0) not already used in the design.
+	- Each block has ports with direction: "in", "out", "inout", or "buffer". Port definitions are inherited from the VHDL entity.
+	- Port placement defaults to the left side for inputs, and the right side for all other directions.
+	- Ports can be freely repositioned to the left, right, top, or bottom side of the block.
+	- "in" and "out" ports are drawn as small arrowhead-only markers (no tail line). The arrowhead points toward the block for "in", and away from the block for "out".
+	- "inout" and "buffer" ports are drawn as small diamond markers.
+2.5 Menus
+	- 1st menu: Open a project, options, and space for future features.
+	- 2nd menu: Draw a structural designer.
+	- 3rd menu: Reserved/empty for future expansion.
 
--- Drawing format
-The format is draw in vector, with high performance in mind.
-User can zoom and unzoom.
-User can move with arrow-keys.
+2.6 Tool-Bar & Object Selection
+	- A tool-bar is present at the top of the window, allowing the user to:
+		-> Open project
+		-> Save project
+		-> Select object
+		-> Draw wire
+		-> Import VHDL module
+		-> Optimal recenter
+	- Each tool-bar option is shown with a small PNG icon.
+	- When the mouse hovers over an icon for 0.5s, a text bubble appears explaining the icon's function.
+	- When 'Select object' is chosen, the user can:
+		- Move the whole wire if no node is selected.
+		- Move a single node if a node is selected.
+	- When import VHDL module is chosen, a folder-explorer located at the launch-directory is started. One can then choose one or multiple VHDL file to add.
+		- The last selected directory is saved so that next time the same directory location is opened.
+	- When 'Optimal recenter' is chosen, the viewport position and zoom are adjusted to fit all modules and wires in the design within the visible area.
 
--- Compatiblity
-The software should generate highly Git compatible files.
-This means, that everything saved must be text-based, easy to understand, easy to understand commits, easy to merge.
+3. Technical Requirements
+3.1 Drawing & Performance
+	- All graphics are vector-based for high performance and scalability.
+	- Drawing format is optimized for vector operations.
+	- User can zoom and unzoom the workspace for detailed or overview editing.
+	- Zoom and unzoom are centered on the mouse cursor position, so the point under the cursor stays fixed.
+	- Zoom-in is capped at a maximum factor of 10.0; there is no limit on zoom-out.
 
--- Upgradability
-The software must absolutely not be monolitic. It must be flexible, upgradable.
-The code must be perfectly partitioned. This will allow the developer to change / upgrade the application on the long term.
+3.2 File Format & Git Compatibility
+	- All saved files are text-based, human-readable, and optimized for Git version control (easy to merge, track, and understand).
+	- File formats are designed for easy commit, merge, and review.
+3.3 Code Architecture
+	- The codebase must be modular, partitioned, and non-monolithic to ensure flexibility and upgradability.
+	- Clear separation of concerns between UI, logic, and data handling.
+	- Partitioned code allows independent upgrades and changes.
 
--- Log
-Software must be highly debuggable. There should be tracking of the software behavior inside logs, as well as every input from the user detected by the software.
+4. Logging & Debugging
+	- Comprehensive logging of software behavior and user actions.
+	- Logs must facilitate debugging and traceability.
+	- Every user input and software event is tracked in logs for high debuggability.
 
--- Menus
-There are multiple menus available.
-- 1st menu : Open a project, options, and keep space for future.
-- 2nd menu : Draw a structural designer
-- 3rd menu : Keep empty
+5. Extensibility & Upgradability
+	- The application must be designed for easy upgrades and feature additions.
+	- Partitioned code structure to allow independent module updates.
+	- The code must not be monolithic, ensuring long-term flexibility.
 
+6. User Experience
+	- Intuitive interface for module placement, wiring, and project management.
+	- Visual clarity and responsiveness prioritized.
+	- User interaction for drawing wires and placing modules is clear and direct.
+	- User can move the workspace view using arrow keys for navigation.
+	- Pressing Escape cancels any ongoing action (drawing, moving, etc).
+	- Pressing CTRL+Z reverses actions (undo) as many times as possible during the session.
+	- Pressing SUPPR (Delete) deletes the selected module or wire.
 
+7. Future Considerations
+	- Menu and feature placeholders for future growth.
+	- Maintain documentation and code comments for maintainability.

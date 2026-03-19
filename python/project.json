@@ -1,148 +1,226 @@
 {
   "modules": [
     {
-      "name": "test",
+      "entity": "clock_divider",
+      "library": "work",
+      "name": "clk",
       "ports": [
-        "adccc"
-      ]
+        {
+          "direction": "in",
+          "name": "clk",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "reset",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "name": "clk_out",
+          "side": "right"
+        }
+      ],
+      "x": 100,
+      "y": 100
+    },
+    {
+      "entity": "clock_divider",
+      "library": "work",
+      "name": "U_0",
+      "ports": [
+        {
+          "direction": "in",
+          "name": "clk",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "reset",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "name": "clk_out",
+          "side": "right"
+        }
+      ],
+      "x": 300,
+      "y": 100
+    },
+    {
+      "entity": "uart_transceiver",
+      "library": "work",
+      "name": "U_1",
+      "ports": [
+        {
+          "direction": "in",
+          "name": "clk",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "reset",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "tx_data",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "tx_start",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "name": "tx_busy",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "tx_serial",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "name": "rx_serial",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "name": "rx_data",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "rx_valid",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "name": "baud_sel",
+          "side": "left"
+        },
+        {
+          "direction": "inout",
+          "name": "data_bus",
+          "side": "right"
+        }
+      ],
+      "x": 500,
+      "y": 100
+    },
+    {
+      "entity": "bus_memory_controller",
+      "library": "work",
+      "name": "U_2",
+      "ports": [
+        {
+          "direction": "in",
+          "name": "clk",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "reset_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "host_addr",
+          "side": "left"
+        },
+        {
+          "direction": "inout",
+          "name": "host_data",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "name": "host_wr_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "host_rd_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "name": "host_cs_n",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "name": "host_ack",
+          "side": "right"
+        },
+        {
+          "direction": "buffer",
+          "name": "host_irq",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_addr",
+          "side": "right"
+        },
+        {
+          "direction": "inout",
+          "name": "mem_data",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_we_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_oe_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_ce_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_ub_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "mem_lb_n",
+          "side": "right"
+        },
+        {
+          "direction": "buffer",
+          "name": "busy",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "name": "error_flag",
+          "side": "right"
+        },
+        {
+          "direction": "inout",
+          "name": "debug_bus",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "name": "config_in",
+          "side": "left"
+        }
+      ],
+      "x": 700,
+      "y": 100
     }
   ],
-  "signals": [
-    {
-      "coordinates": [
-        [
-          105,
-          124
-        ],
-        [
-          387,
-          48
-        ],
-        [
-          386,
-          48
-        ],
-        [
-          412,
-          172
-        ],
-        [
-          413,
-          172
-        ],
-        [
-          437,
-          166
-        ],
-        [
-          437,
-          168
-        ],
-        [
-          437,
-          171
-        ],
-        [
-          437,
-          171
-        ],
-        [
-          495,
-          173
-        ],
-        [
-          495,
-          172
-        ],
-        [
-          246,
-          234
-        ],
-        [
-          246,
-          236
-        ],
-        [
-          445,
-          370
-        ],
-        [
-          445,
-          370
-        ],
-        [
-          696,
-          117
-        ],
-        [
-          697,
-          117
-        ],
-        [
-          133,
-          74
-        ],
-        [
-          133,
-          74
-        ],
-        [
-          133,
-          74
-        ],
-        [
-          133,
-          74
-        ]
-      ]
-    },
-    {
-      "coordinates": [
-        [
-          305,
-          72
-        ],
-        [
-          365,
-          71
-        ],
-        [
-          365,
-          71
-        ],
-        [
-          367,
-          71
-        ],
-        [
-          367,
-          71
-        ]
-      ]
-    },
-    {
-      "coordinates": [
-        [
-          86,
-          116
-        ],
-        [
-          114,
-          256
-        ],
-        [
-          115,
-          256
-        ],
-        [
-          115,
-          256
-        ],
-        [
-          115,
-          256
-        ]
-      ]
-    }
-  ]
+  "signals": []
 }

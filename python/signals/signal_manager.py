@@ -1,11 +1,26 @@
-# Placeholder for signal and wiring logic
+from app_logging.logger import Logger
+
 
 class SignalManager:
-    def __init__(self):
-        self.signals = []
-        print("Signal manager initialized.")
+    """Manages the collection of signal wires in the project."""
 
-    def connect(self, src, dst, signal_type):
-        signal = {'start': src, 'end': dst, 'type': signal_type}
+    def __init__(self, logger: Logger):
+        self._logger = logger
+        self.signals: list[dict] = []
+        self._logger.log_action("SignalManager initialized")
+
+    def add_signal(self, signal: dict):
         self.signals.append(signal)
-        print(f"Connecting {src} to {dst} with {signal_type}")
+        self._logger.log_action("add_signal", str(signal))
+
+    def remove_signal(self, index: int):
+        if 0 <= index < len(self.signals):
+            removed = self.signals.pop(index)
+            self._logger.log_action("remove_signal", str(removed))
+
+    def to_list(self) -> list[dict]:
+        return self.signals
+
+    def load(self, signals: list[dict]):
+        self.signals = signals
+        self._logger.log_action("signals_loaded", f"{len(signals)} signals")
