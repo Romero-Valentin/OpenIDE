@@ -11,6 +11,11 @@ MODULE_MIN_W = 140
 MODULE_MIN_H = 60
 MODULE_PAD = 15
 
+# Hit-testing radii in *screen pixels*.  Divided by the current zoom
+# factor at runtime to obtain world-coordinate thresholds.
+NODE_HIT_RADIUS_PX = 10   # must click very close to grab a single node
+SEGMENT_HIT_RADIUS_PX = 12  # slightly larger for segment/wire body clicks
+
 
 class DesignerWidget(QWidget):
     """Canvas widget for the structural FPGA designer."""
@@ -21,17 +26,29 @@ class DesignerWidget(QWidget):
         self.modules = []
         self.signals = []
         self._undo_stack = []
+        self._redo_stack = []
 
         # Drawing state
         self.mode = "select"  # 'draw' or 'select'
         self.drawing_wire = False
         self.current_wire = []
 
-        # Selection state
-        self.selected_wire = None
-        self.selected_node = None
+        # Selection state (multi-select)
+        self.selected_modules = set()  # Indices of selected modules
+        self.selected_wires = set()    # Indices of selected wires
+
+        # Drag state for moving objects
+        self._drag_type = None  # 'move_selection', 'node', 'rubber_band'
+        self._drag_wire_idx = None
+        self._drag_node_idx = None
         self._move_start_pos = None
         self._move_orig_coords = None
+        self._move_orig_module_positions = None
+        self._move_orig_wire_positions = None
+
+        # Rubber-band selection rectangle
+        self._rubber_band_start = None
+        self._rubber_band_end = None
 
         # Viewport state
         self.zoom = 1.0
@@ -48,20 +65,63 @@ class DesignerWidget(QWidget):
         self._move_step = 20
 
     # ------------------------------------------------------------------
-    # Undo
+    # Undo / Redo
+    #
+    # Invariant: _save_undo() is ALWAYS called BEFORE the state is mutated.
+    # This ensures the snapshot on the stack represents the state the user
+    # can return to.  For drag operations the snapshot is taken when the
+    # drag begins; if the user releases without actually moving, the
+    # snapshot is discarded (_pop_undo_if_unchanged).
     # ------------------------------------------------------------------
 
     def _save_undo(self):
+        """Snapshot the current (pre-mutation) state onto the undo stack.
+
+        Must be called BEFORE any modification to self.modules / self.signals.
+        Clears the redo stack because a new action invalidates the redo branch.
+        """
         self._undo_stack.append(
             (copy.deepcopy(self.modules), copy.deepcopy(self.signals))
         )
         if len(self._undo_stack) > 100:
             self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def _pop_undo_if_unchanged(self):
+        """Discard the last undo snapshot if the state hasn't changed.
+
+        Called on mouse-release when a drag started (snapshot was taken)
+        but the user did not actually move anything.
+        """
+        if not self._undo_stack:
+            return
+        prev_modules, prev_signals = self._undo_stack[-1]
+        if prev_modules == self.modules and prev_signals == self.signals:
+            self._undo_stack.pop()
 
     def undo(self):
-        if self._undo_stack:
-            self.modules, self.signals = self._undo_stack.pop()
-            self.update()
+        """Revert to the previous state.  The current state is pushed to redo."""
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(
+            (copy.deepcopy(self.modules), copy.deepcopy(self.signals))
+        )
+        self.modules, self.signals = self._undo_stack.pop()
+        self.selected_modules.clear()
+        self.selected_wires.clear()
+        self.update()
+
+    def redo(self):
+        """Re-apply the last undone action."""
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(
+            (copy.deepcopy(self.modules), copy.deepcopy(self.signals))
+        )
+        self.modules, self.signals = self._redo_stack.pop()
+        self.selected_modules.clear()
+        self.selected_wires.clear()
+        self.update()
 
     # ------------------------------------------------------------------
     # Grid helpers
@@ -79,6 +139,37 @@ class DesignerWidget(QWidget):
         dx, dy = x2 - x1, y2 - y1
         t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
         return hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+    @staticmethod
+    def _segment_intersects_rect(x1, y1, x2, y2, rect: QRect) -> bool:
+        """Return True if the line segment (x1,y1)-(x2,y2) intersects rect.
+
+        Uses Liang-Barsky clipping on the axis-aligned rectangle.
+        """
+        rl = rect.left()
+        rr = rect.right()
+        rt = rect.top()
+        rb = rect.bottom()
+
+        dx = x2 - x1
+        dy = y2 - y1
+        p = [-dx, dx, -dy, dy]
+        q = [x1 - rl, rr - x1, y1 - rt, rb - y1]
+
+        t0, t1 = 0.0, 1.0
+        for pi, qi in zip(p, q):
+            if pi == 0:
+                if qi < 0:
+                    return False
+            else:
+                t = qi / pi
+                if pi < 0:
+                    t0 = max(t0, t)
+                else:
+                    t1 = min(t1, t)
+                if t0 > t1:
+                    return False
+        return True
 
     # ------------------------------------------------------------------
     # Module helpers
@@ -98,6 +189,33 @@ class DesignerWidget(QWidget):
         while n in used:
             n += 1
         return f'U_{n}'
+
+    def _module_rect(self, mod) -> QRect:
+        """Compute the bounding rectangle for a module."""
+        x = mod.get('x', 0)
+        y = mod.get('y', 0)
+        ports = mod.get('ports', [])
+        sides = {'left': 0, 'right': 0, 'top': 0, 'bottom': 0}
+        for p in ports:
+            sides[p.get('side', 'left')] += 1
+        max_vertical = max(sides['left'], sides['right'], 1)
+        max_horizontal = max(sides['top'], sides['bottom'], 0)
+        w = max(MODULE_MIN_W, (max_horizontal + 1) * PORT_SPACING + 2 * MODULE_PAD)
+        h = max(MODULE_MIN_H, (max_vertical + 1) * PORT_SPACING)
+        return QRect(x, y, w, h)
+
+    def _hit_test_module(self, raw_pos) -> int | None:
+        """Return the index of the topmost module whose rect contains *raw_pos*.
+
+        *raw_pos* should be the unsnapped world-coordinate cursor position
+        so that the test is pixel-accurate regardless of zoom.
+        """
+        pt = QPoint(int(raw_pos[0]), int(raw_pos[1]))
+        for idx in range(len(self.modules) - 1, -1, -1):
+            rect = self._module_rect(self.modules[idx])
+            if rect.contains(pt):
+                return idx
+        return None
 
     # ------------------------------------------------------------------
     # Optimal recenter
@@ -162,6 +280,7 @@ class DesignerWidget(QWidget):
         self._draw_modules(painter)
         self._draw_signals(painter)
         self._draw_current_wire(painter)
+        self._draw_rubber_band(painter)
 
         painter.restore()
 
@@ -196,7 +315,7 @@ class DesignerWidget(QWidget):
             gx += grid
 
     def _draw_modules(self, painter):
-        for mod in self.modules:
+        for mod_idx, mod in enumerate(self.modules):
             x = mod.get('x', 0)
             y = mod.get('y', 0)
             ports = mod.get('ports', [])
@@ -212,7 +331,11 @@ class DesignerWidget(QWidget):
 
             rect = QRect(x, y, w, h)
             painter.setBrush(QColor(0, 200, 0))
-            painter.setPen(QPen(Qt.black, 2))
+            # Highlight selected modules with blue boundaries
+            if mod_idx in self.selected_modules:
+                painter.setPen(QPen(QColor(0, 100, 255), 3))
+            else:
+                painter.setPen(QPen(Qt.black, 2))
             painter.drawRect(rect)
 
             # Draw instance name (top) and entity name (center)
@@ -338,14 +461,30 @@ class DesignerWidget(QWidget):
             ]))
 
     def _draw_signals(self, painter):
-        painter.setPen(QPen(QColor(0, 0, 255), 3))
-        for sig in self.signals:
+        for sig_idx, sig in enumerate(self.signals):
             coords = sig.get('coordinates', [])
+            # Selected wires: highlighted in blue with thicker lines
+            if sig_idx in self.selected_wires:
+                painter.setPen(QPen(QColor(0, 100, 255), 5))
+            else:
+                painter.setPen(QPen(QColor(0, 0, 255), 3))
             for i in range(len(coords) - 1):
                 painter.drawLine(
                     coords[i][0], coords[i][1],
                     coords[i + 1][0], coords[i + 1][1],
                 )
+            # Draw signal name with slightly bigger font when selected
+            if sig_idx in self.selected_wires and coords:
+                name = sig.get('name', '')
+                if name:
+                    font = painter.font()
+                    old_size = font.pointSize()
+                    font.setPointSize(old_size + 2)
+                    painter.setFont(font)
+                    mid = len(coords) // 2
+                    painter.drawText(coords[mid][0] + 5, coords[mid][1] - 5, name)
+                    font.setPointSize(old_size)
+                    painter.setFont(font)
 
     def _draw_current_wire(self, painter):
         if self.drawing_wire and len(self.current_wire) > 1:
@@ -355,6 +494,19 @@ class DesignerWidget(QWidget):
                     self.current_wire[i][0], self.current_wire[i][1],
                     self.current_wire[i + 1][0], self.current_wire[i + 1][1],
                 )
+
+    def _draw_rubber_band(self, painter):
+        """Draw the selection rectangle during rubber-band selection."""
+        if self._rubber_band_start and self._rubber_band_end:
+            x1, y1 = self._rubber_band_start
+            x2, y2 = self._rubber_band_end
+            rect = QRect(
+                int(min(x1, x2)), int(min(y1, y2)),
+                int(abs(x2 - x1)), int(abs(y2 - y1)),
+            )
+            painter.setPen(QPen(QColor(0, 120, 215), 1, Qt.DashLine))
+            painter.setBrush(QColor(0, 120, 215, 40))
+            painter.drawRect(rect)
 
     # ------------------------------------------------------------------
     # Viewport: zoom / pan
@@ -410,7 +562,12 @@ class DesignerWidget(QWidget):
             self.undo()
             return
 
-        # Delete key — remove selected wire
+        # Ctrl+E — redo
+        if event.key() == Qt.Key_E and (event.modifiers() & Qt.ControlModifier):
+            self.redo()
+            return
+
+        # Delete key — remove all selected objects
         if event.key() == Qt.Key_Delete:
             self._delete_selected()
             return
@@ -436,21 +593,41 @@ class DesignerWidget(QWidget):
     def _cancel_action(self):
         self.drawing_wire = False
         self.current_wire = []
-        self.selected_wire = None
-        self.selected_node = None
+        self.selected_modules.clear()
+        self.selected_wires.clear()
+        self._drag_type = None
+        self._drag_wire_idx = None
+        self._drag_node_idx = None
         self._move_start_pos = None
         self._move_orig_coords = None
+        self._move_orig_module_positions = None
+        self._move_orig_wire_positions = None
+        self._rubber_band_start = None
+        self._rubber_band_end = None
         self.update()
 
     def _delete_selected(self):
-        if self.mode == "select" and self.selected_wire is not None:
-            self._save_undo()
-            del self.signals[self.selected_wire]
-            self.selected_wire = None
-            self.selected_node = None
-            self._move_start_pos = None
-            self._move_orig_coords = None
-            self.update()
+        """Delete all currently selected objects (modules and wires)."""
+        if self.mode != "select":
+            return
+        if not self.selected_modules and not self.selected_wires:
+            return
+        self._save_undo()
+        # Remove selected wires (reverse order to preserve indices)
+        for idx in sorted(self.selected_wires, reverse=True):
+            if 0 <= idx < len(self.signals):
+                del self.signals[idx]
+        # Remove selected modules (reverse order to preserve indices)
+        for idx in sorted(self.selected_modules, reverse=True):
+            if 0 <= idx < len(self.modules):
+                del self.modules[idx]
+        self.selected_modules.clear()
+        self.selected_wires.clear()
+        self._drag_type = None
+        self._move_start_pos = None
+        self._move_orig_coords = None
+        self._move_orig_module_positions = None
+        self.update()
 
     # ------------------------------------------------------------------
     # Mouse — drawing / selecting
@@ -459,12 +636,14 @@ class DesignerWidget(QWidget):
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
-        pos = self._snap_to_grid(self._transform_mouse(event))
+        raw_pos = self._transform_mouse(event)
+        pos = self._snap_to_grid(raw_pos)
+        ctrl = bool(event.modifiers() & Qt.ControlModifier)
 
         if self.mode == "draw":
             self._handle_draw_click(pos)
         elif self.mode == "select":
-            self._handle_select_click(pos)
+            self._handle_select_click(pos, raw_pos, ctrl)
 
     def _handle_draw_click(self, pos):
         if not self.drawing_wire:
@@ -477,57 +656,216 @@ class DesignerWidget(QWidget):
             self.current_wire.append(pos)
         self.update()
 
-    def _handle_select_click(self, pos):
-        self.selected_wire = None
-        self.selected_node = None
+    def _handle_select_click(self, pos, raw_pos, ctrl=False):
+        """Handle a click in select mode.
 
-        # Try to select a node first
-        min_dist = 15
+        Hit-testing is performed against *raw_pos* (unsnapped world coords)
+        so that accuracy is independent of the snap grid.  Thresholds are
+        expressed in screen pixels and converted to world units using the
+        current zoom factor.
+
+        *pos* (snapped) is only used for the starting position of a drag
+        so that movement deltas stay on-grid.
+
+        - Plain click on an object: select it exclusively (clears previous).
+        - CTRL+click: toggle the object in/out of the current selection.
+        - Click on empty space: start rubber-band selection.
+        """
+        # Use the unsnapped cursor for hit testing
+        rx, ry = raw_pos
+
+        hit_module = self._hit_test_module(raw_pos)
+        hit_wire = None
+        hit_node = None
+
+        # --- 1. Try to hit a wire node (small radius) ---
+        node_threshold = NODE_HIT_RADIUS_PX / max(self.zoom, 0.01)
+        best_node_dist = node_threshold
         for idx, sig in enumerate(self.signals):
             for nidx, node in enumerate(sig.get('coordinates', [])):
-                dist = hypot(pos[0] - node[0], pos[1] - node[1])
-                if dist < min_dist:
-                    min_dist = dist
-                    self.selected_wire = idx
-                    self.selected_node = nidx
+                dist = hypot(rx - node[0], ry - node[1])
+                if dist < best_node_dist:
+                    best_node_dist = dist
+                    hit_wire = idx
+                    hit_node = nidx
 
-        # Fall back to whole-wire selection
-        if self.selected_wire is None:
-            min_dist = 15
-            for idx, sig in enumerate(self.signals):
-                coords = sig.get('coordinates', [])
-                for i in range(len(coords) - 1):
-                    d = self._distance_to_segment(
-                        pos[0], pos[1],
-                        coords[i][0], coords[i][1],
-                        coords[i + 1][0], coords[i + 1][1],
-                    )
-                    if d < min_dist:
-                        min_dist = d
-                        self.selected_wire = idx
-                        self.selected_node = None
+        # --- 2. Try to hit a wire segment (slightly larger radius) ---
+        seg_threshold = SEGMENT_HIT_RADIUS_PX / max(self.zoom, 0.01)
+        best_seg_dist = seg_threshold
+        hit_seg_wire = None
+        for idx, sig in enumerate(self.signals):
+            coords = sig.get('coordinates', [])
+            for i in range(len(coords) - 1):
+                d = self._distance_to_segment(
+                    rx, ry,
+                    coords[i][0], coords[i][1],
+                    coords[i + 1][0], coords[i + 1][1],
+                )
+                if d < best_seg_dist:
+                    best_seg_dist = d
+                    hit_seg_wire = idx
 
-        # Store move origin
-        self._move_start_pos = pos
-        self._move_orig_coords = None
-        if self.selected_wire is not None:
-            if self.selected_node is not None:
-                self._move_orig_coords = self.signals[self.selected_wire]['coordinates'][self.selected_node]
+        # If a segment was hit but no node was, prefer the segment.
+        # This prevents accidentally grabbing a corner node when the
+        # user intended to drag the whole wire.
+        if hit_wire is None and hit_seg_wire is not None:
+            hit_wire = hit_seg_wire
+            hit_node = None
+
+        # --- Decide action based on what was hit ---
+        if hit_module is not None:
+            if ctrl:
+                # CTRL+click: toggle this module in/out of the selection
+                if hit_module in self.selected_modules:
+                    self.selected_modules.discard(hit_module)
+                else:
+                    self.selected_modules.add(hit_module)
+                self._drag_type = None
             else:
-                self._move_orig_coords = list(self.signals[self.selected_wire]['coordinates'])
+                # Plain click on a module
+                if hit_module not in self.selected_modules:
+                    self.selected_modules.clear()
+                    self.selected_wires.clear()
+                    self.selected_modules.add(hit_module)
+                # Snapshot state BEFORE any movement occurs
+                self._save_undo()
+                self._drag_type = 'move_selection'
+                self._move_start_pos = pos
+                self._save_move_origins()
+
+        elif hit_wire is not None and hit_node is not None:
+            if ctrl:
+                # CTRL+click on a node: toggle the wire in the selection
+                if hit_wire in self.selected_wires:
+                    self.selected_wires.discard(hit_wire)
+                else:
+                    self.selected_wires.add(hit_wire)
+                self._drag_type = None
+            else:
+                # Plain click on a wire node — drag that single node only
+                self.selected_modules.clear()
+                self.selected_wires.clear()
+                self.selected_wires.add(hit_wire)
+                # Snapshot state BEFORE any movement occurs
+                self._save_undo()
+                self._drag_type = 'node'
+                self._drag_wire_idx = hit_wire
+                self._drag_node_idx = hit_node
+                self._move_start_pos = pos
+                self._move_orig_coords = tuple(
+                    self.signals[hit_wire]['coordinates'][hit_node]
+                )
+
+        elif hit_wire is not None:
+            if ctrl:
+                # CTRL+click on a wire segment: toggle in selection
+                if hit_wire in self.selected_wires:
+                    self.selected_wires.discard(hit_wire)
+                else:
+                    self.selected_wires.add(hit_wire)
+                self._drag_type = None
+            else:
+                # Plain click on a wire segment — move all selected together
+                if hit_wire not in self.selected_wires:
+                    self.selected_modules.clear()
+                    self.selected_wires.clear()
+                    self.selected_wires.add(hit_wire)
+                # Snapshot state BEFORE any movement occurs
+                self._save_undo()
+                self._drag_type = 'move_selection'
+                self._move_start_pos = pos
+                self._save_move_origins()
+
+        else:
+            # Clicked on empty space — start rubber-band selection
+            if not ctrl:
+                self.selected_modules.clear()
+                self.selected_wires.clear()
+            self._drag_type = 'rubber_band'
+            self._rubber_band_start = raw_pos
+            self._rubber_band_end = raw_pos
+
         self.update()
 
+    def _save_move_origins(self):
+        """Snapshot the original positions of every selected object before a move."""
+        self._move_orig_module_positions = {
+            idx: (self.modules[idx]['x'], self.modules[idx]['y'])
+            for idx in self.selected_modules
+        }
+        self._move_orig_wire_positions = {
+            idx: list(self.signals[idx]['coordinates'])
+            for idx in self.selected_wires
+        }
+
     def mouseReleaseEvent(self, event):
-        if self.mode == "select" and self.selected_wire is not None:
-            self._save_undo()
-            self.selected_wire = None
-            self.selected_node = None
-            self._move_start_pos = None
-            self._move_orig_coords = None
-            self.update()
+        if self.mode != "select" or self._drag_type is None:
+            return
+
+        if self._drag_type == 'rubber_band':
+            # Finalize rubber-band: select all objects within the rectangle
+            self._finalize_rubber_band()
+        elif self._drag_type in ('move_selection', 'node'):
+            # Undo snapshot was taken at drag-start.  If the user released
+            # without actually moving anything, discard it to keep the
+            # undo stack clean.
+            self._pop_undo_if_unchanged()
+
+        # Reset drag state (keep selection visible)
+        self._drag_type = None
+        self._drag_wire_idx = None
+        self._drag_node_idx = None
+        self._move_start_pos = None
+        self._move_orig_coords = None
+        self._move_orig_module_positions = None
+        self._move_orig_wire_positions = None
+        self._rubber_band_start = None
+        self._rubber_band_end = None
+        self.update()
+
+    def _finalize_rubber_band(self):
+        """Select all modules and wires that intersect the rubber-band rect."""
+        if not self._rubber_band_start or not self._rubber_band_end:
+            return
+        x1, y1 = self._rubber_band_start
+        x2, y2 = self._rubber_band_end
+        sel_rect = QRect(
+            int(min(x1, x2)), int(min(y1, y2)),
+            int(abs(x2 - x1)), int(abs(y2 - y1)),
+        )
+        self.selected_modules.clear()
+        self.selected_wires.clear()
+
+        # Select modules whose bounding rect intersects the selection rect
+        for idx, mod in enumerate(self.modules):
+            if sel_rect.intersects(self._module_rect(mod)):
+                self.selected_modules.add(idx)
+
+        # Select wires whose bounding box or any segment intersects the rect
+        for idx, sig in enumerate(self.signals):
+            coords = sig.get('coordinates', [])
+            selected = False
+            # Check if any vertex is inside the rectangle
+            for coord in coords:
+                if sel_rect.contains(QPoint(int(coord[0]), int(coord[1]))):
+                    selected = True
+                    break
+            # Check if any segment intersects the rectangle (partial overlap)
+            if not selected:
+                for i in range(len(coords) - 1):
+                    if self._segment_intersects_rect(
+                        coords[i][0], coords[i][1],
+                        coords[i + 1][0], coords[i + 1][1],
+                        sel_rect,
+                    ):
+                        selected = True
+                        break
+            if selected:
+                self.selected_wires.add(idx)
 
     def mouseDoubleClickEvent(self, event):
         if self.drawing_wire and len(self.current_wire) > 1:
+            # Snapshot BEFORE adding the new wire
             self._save_undo()
             self.drawing_wire = False
             self.signals.append({'coordinates': self.current_wire})
@@ -547,15 +885,27 @@ class DesignerWidget(QWidget):
             self.current_wire += [mid, pos]
             self.update()
 
-        elif self.mode == "select" and self.selected_wire is not None and self._move_start_pos:
-            if self.selected_node is not None:
-                self.signals[self.selected_wire]['coordinates'][self.selected_node] = pos
-            else:
+        elif self.mode == "select" and self._drag_type is not None:
+            if self._drag_type == 'rubber_band':
+                # Update rubber-band rectangle with unsnapped coords
+                raw = self._transform_mouse(event)
+                self._rubber_band_end = raw
+            elif self._drag_type == 'node' and self._drag_wire_idx is not None:
+                # Move a single wire node
+                self.signals[self._drag_wire_idx]['coordinates'][self._drag_node_idx] = pos
+            elif self._drag_type == 'move_selection':
+                # Move all selected modules and wires together
                 dx = pos[0] - self._move_start_pos[0]
                 dy = pos[1] - self._move_start_pos[1]
-                self.signals[self.selected_wire]['coordinates'] = [
-                    (x + dx, y + dy) for (x, y) in self._move_orig_coords
-                ]
+                if self._move_orig_module_positions:
+                    for idx, (ox, oy) in self._move_orig_module_positions.items():
+                        self.modules[idx]['x'] = ox + dx
+                        self.modules[idx]['y'] = oy + dy
+                if self._move_orig_wire_positions:
+                    for idx, orig_coords in self._move_orig_wire_positions.items():
+                        self.signals[idx]['coordinates'] = [
+                            (x + dx, y + dy) for (x, y) in orig_coords
+                        ]
             self.update()
 
     @staticmethod

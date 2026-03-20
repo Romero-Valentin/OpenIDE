@@ -43,11 +43,19 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> Optimal recenter
 	- Each tool-bar option is shown with a small PNG icon.
 	- When the mouse hovers over an icon for 0.5s, a text bubble appears explaining the icon's function.
+	- When 'Save project' is chosen:
+		- If no project file path is known yet, open a file dialog so the user can choose where to save.
+		- If a project file path is already known, save directly to that file without showing a dialog.
+		- After a successful save, display a temporary notification in the top-right corner of the window that reads "Saved" and automatically disappears after 1 second.
 	- When 'Select object' is chosen, the user can:
-		- Move the whole wire if no node is selected.
-		- Move a single node if a node is selected.
-	- When import VHDL module is chosen, a folder-explorer located at the launch-directory is started. One can then choose one or multiple VHDL file to add.
-		- The last selected directory is saved so that next time the same directory location is opened.
+		- Click and drag on empty space to draw a selection rectangle. On release, every object (module or wire) that is entirely or partially inside the rectangle becomes selected.
+		- Hold CTRL and left-click an object to toggle it in/out of the current selection (additive selection).
+		- Click and drag a wire segment (not on a node) to move the entire wire.
+		- Click and drag a wire node to move that single node.
+		- Click and drag a VHDL block to move it.
+		- When multiple objects are selected, dragging any one of them moves all selected objects together.
+	- When 'Import VHDL module' is chosen, a file browser opens at the last-used directory (initially the launch directory). The user can select one or multiple VHDL files to import.
+		- The last selected directory is persisted so subsequent imports reopen the same location.
 	- When 'Optimal recenter' is chosen, the viewport position and zoom are adjusted to fit all modules and wires in the design within the visible area.
 
 3. Technical Requirements
@@ -57,11 +65,27 @@ The application provides a graphical interface for adding modules, wiring signal
 	- User can zoom and unzoom the workspace for detailed or overview editing.
 	- Zoom and unzoom are centered on the mouse cursor position, so the point under the cursor stays fixed.
 	- Zoom-in is capped at a maximum factor of 10.0; there is no limit on zoom-out.
+	- Object hit-testing (clicking to select or drag)
+		- Uses the exact cursor position, not the snapped grid position, so that selection accuracy is independent of the grid spacing.
+		- Rdius is defined in screen pixels and scale with the zoom level, ensuring consistent clickable areas at any zoom.
+	- When an object is selected, its visual appearance changes to indicate selection:
+		- Wires (signals): highlighted in blue with a slightly thicker line and larger label font.
+		- VHDL blocks: the module boundary is drawn in blue.
 
-3.2 File Format & Git Compatibility
+3.2 Action Remembering (Undo / Redo)
+	- Every user action that modifies the design is recorded in an action history.
+	- Recorded actions include (but are not limited to):
+		- Moving one or more elements from position A to position B.
+		- Deleting one or more elements.
+		- Adding one or more elements.
+	- CTRL+Z undoes the most recent action (repeatable to undo multiple steps).
+	- CTRL+E redoes the last undone action (repeatable to redo multiple steps).
+	- The redo history is cleared whenever a new action is performed after an undo.
+
+3.3 File Format & Git Compatibility
 	- All saved files are text-based, human-readable, and optimized for Git version control (easy to merge, track, and understand).
 	- File formats are designed for easy commit, merge, and review.
-3.3 Code Architecture
+3.4 Code Architecture
 	- The codebase must be modular, partitioned, and non-monolithic to ensure flexibility and upgradability.
 	- Clear separation of concerns between UI, logic, and data handling.
 	- Partitioned code allows independent upgrades and changes.
@@ -83,7 +107,8 @@ The application provides a graphical interface for adding modules, wiring signal
 	- User can move the workspace view using arrow keys for navigation.
 	- Pressing Escape cancels any ongoing action (drawing, moving, etc).
 	- Pressing CTRL+Z reverses actions (undo) as many times as possible during the session.
-	- Pressing SUPPR (Delete) deletes the selected module or wire.
+	- Pressing CTRL+S runs "Save Project".
+	- Pressing SUPPR (Delete) deletes all currently selected objects (VHDL block, wires, etc...)
 
 7. Future Considerations
 	- Menu and feature placeholders for future growth.

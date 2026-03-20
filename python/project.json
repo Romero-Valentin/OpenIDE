@@ -3,30 +3,6 @@
     {
       "entity": "clock_divider",
       "library": "work",
-      "name": "clk",
-      "ports": [
-        {
-          "direction": "in",
-          "name": "clk",
-          "side": "left"
-        },
-        {
-          "direction": "in",
-          "name": "reset",
-          "side": "left"
-        },
-        {
-          "direction": "out",
-          "name": "clk_out",
-          "side": "right"
-        }
-      ],
-      "x": 100,
-      "y": 100
-    },
-    {
-      "entity": "clock_divider",
-      "library": "work",
       "name": "U_0",
       "ports": [
         {
@@ -45,7 +21,7 @@
           "side": "right"
         }
       ],
-      "x": 300,
+      "x": 100,
       "y": 100
     },
     {
@@ -109,118 +85,82 @@
           "side": "right"
         }
       ],
-      "x": 500,
-      "y": 100
-    },
-    {
-      "entity": "bus_memory_controller",
-      "library": "work",
-      "name": "U_2",
-      "ports": [
-        {
-          "direction": "in",
-          "name": "clk",
-          "side": "left"
-        },
-        {
-          "direction": "in",
-          "name": "reset_n",
-          "side": "left"
-        },
-        {
-          "direction": "in",
-          "name": "host_addr",
-          "side": "left"
-        },
-        {
-          "direction": "inout",
-          "name": "host_data",
-          "side": "right"
-        },
-        {
-          "direction": "in",
-          "name": "host_wr_n",
-          "side": "left"
-        },
-        {
-          "direction": "in",
-          "name": "host_rd_n",
-          "side": "left"
-        },
-        {
-          "direction": "in",
-          "name": "host_cs_n",
-          "side": "left"
-        },
-        {
-          "direction": "out",
-          "name": "host_ack",
-          "side": "right"
-        },
-        {
-          "direction": "buffer",
-          "name": "host_irq",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_addr",
-          "side": "right"
-        },
-        {
-          "direction": "inout",
-          "name": "mem_data",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_we_n",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_oe_n",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_ce_n",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_ub_n",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "mem_lb_n",
-          "side": "right"
-        },
-        {
-          "direction": "buffer",
-          "name": "busy",
-          "side": "right"
-        },
-        {
-          "direction": "out",
-          "name": "error_flag",
-          "side": "right"
-        },
-        {
-          "direction": "inout",
-          "name": "debug_bus",
-          "side": "right"
-        },
-        {
-          "direction": "in",
-          "name": "config_in",
-          "side": "left"
-        }
-      ],
-      "x": 700,
+      "x": 400,
       "y": 100
     }
   ],
-  "signals": []
+  "signals": [
+    {
+      "coordinates": [
+        [
+          100,
+          300
+        ],
+        [
+          200,
+          500
+        ],
+        [
+          200,
+          500
+        ],
+        [
+          200,
+          500
+        ],
+        [
+          200,
+          500
+        ]
+      ]
+    },
+    {
+      "coordinates": [
+        [
+          300,
+          600
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          500,
+          300
+        ]
+      ]
+    },
+    {
+      "coordinates": [
+        [
+          500,
+          500
+        ],
+        [
+          200,
+          300
+        ],
+        [
+          200,
+          300
+        ],
+        [
+          200,
+          300
+        ],
+        [
+          200,
+          300
+        ]
+      ]
+    }
+  ]
 }

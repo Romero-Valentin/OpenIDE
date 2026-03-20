@@ -2,8 +2,9 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QToolBar, QToolTip,
     QFileDialog, QInputDialog, QMessageBox,
 )
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtCore import QTimer
+from ui.toast import ToastNotification
 import os
 
 
@@ -15,9 +16,12 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         self._tooltip_timer = None
         self._last_import_dir = os.getcwd()
+        self._project_filepath = None  # Known save path (None = never saved)
         self._init_menu()
         self._init_toolbar()
         self._init_central_widget()
+        self._init_shortcuts()
+        self._toast = ToastNotification(self)
         self._log("MainWindow initialized")
 
     def _log(self, action, details=None):
@@ -150,21 +154,43 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def _init_shortcuts(self):
+        """Register global keyboard shortcuts."""
+        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        save_shortcut.activated.connect(self.save_project)
+
+    # ------------------------------------------------------------------
     # Save / Load
     # ------------------------------------------------------------------
 
     def save_project(self):
+        """Save the project.
+
+        If the project file path is already known, save directly.
+        Otherwise, open a file dialog so the user can choose a location.
+        After a successful save, show a brief "Saved" toast notification.
+        """
         from data.data_manager import DataManager
 
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "Save Project", "", "JSON Files (*.json)"
-        )
-        if filename:
-            data = {
-                'modules': self.designer_widget.modules,
-                'signals': self.designer_widget.signals,
-            }
-            DataManager(logger=self._logger).save_project(data, filename)
+        # Determine target file path
+        filepath = self._project_filepath
+        if filepath is None:
+            filepath, _ = QFileDialog.getSaveFileName(
+                self, "Save Project", "", "JSON Files (*.json)"
+            )
+            if not filepath:
+                return  # User cancelled
+
+        data = {
+            'modules': self.designer_widget.modules,
+            'signals': self.designer_widget.signals,
+        }
+        DataManager(logger=self._logger).save_project(data, filepath)
+        self._project_filepath = filepath
+        self._toast.show_message("Saved", style="success")
 
     def load_project(self):
         from data.data_manager import DataManager
@@ -177,6 +203,8 @@ class MainWindow(QMainWindow):
             self.designer_widget.modules = data.get('modules', [])
             self.designer_widget.signals = data.get('signals', [])
             self.designer_widget.update()
+            # Remember the path so subsequent saves go to the same file
+            self._project_filepath = filename
 
     # ------------------------------------------------------------------
     # Dialogs
@@ -217,6 +245,8 @@ class MainWindow(QMainWindow):
                 continue
             instance_name = custom_name.strip() if custom_name.strip() else instance_name
 
+            # Snapshot BEFORE adding the module so CTRL+Z can revert it
+            self.designer_widget._save_undo()
             count = len(self.designer_widget.modules)
             self.designer_widget.modules.append({
                 'name': instance_name,
@@ -238,6 +268,8 @@ class MainWindow(QMainWindow):
             self, "Remove Module", "Select module:", names, 0, False
         )
         if ok and name:
+            # Snapshot BEFORE removing so CTRL+Z can revert it
+            self.designer_widget._save_undo()
             self.designer_widget.modules = [
                 m for m in self.designer_widget.modules if m['name'] != name
             ]
@@ -278,6 +310,8 @@ class MainWindow(QMainWindow):
         )
         if not ok:
             return
+        # Snapshot BEFORE adding the signal so CTRL+Z can revert it
+        self.designer_widget._save_undo()
         self.designer_widget.signals.append({
             'src_mod': src_mod,
             'src_port': src_port,
