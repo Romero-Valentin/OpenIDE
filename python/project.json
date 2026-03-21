@@ -1,91 +1,381 @@
 {
   "modules": [
     {
+      "color": [
+        0,
+        200,
+        0
+      ],
       "entity": "clock_divider",
+      "entity_offset": [
+        0,
+        0
+      ],
+      "height": 500,
       "library": "work",
       "name": "U_0",
+      "name_offset": [
+        0,
+        0
+      ],
       "ports": [
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "clk",
           "side": "left"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "reset",
           "side": "left"
         },
         {
           "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "clk_out",
           "side": "right"
         }
       ],
+      "width": 300,
       "x": 100,
       "y": 100
     },
     {
+      "color": [
+        0,
+        200,
+        0
+      ],
       "entity": "uart_transceiver",
+      "entity_offset": [
+        0,
+        0
+      ],
+      "height": 700,
       "library": "work",
       "name": "U_1",
+      "name_offset": [
+        0,
+        0
+      ],
       "ports": [
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "clk",
           "side": "left"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "reset",
           "side": "left"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "tx_data",
           "side": "left"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "tx_start",
           "side": "left"
         },
         {
           "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "tx_busy",
           "side": "right"
         },
         {
           "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "tx_serial",
           "side": "right"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "rx_serial",
           "side": "left"
         },
         {
           "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "rx_data",
           "side": "right"
         },
         {
           "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "rx_valid",
           "side": "right"
         },
         {
           "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "baud_sel",
           "side": "left"
         },
         {
           "direction": "inout",
+          "label_offset": [
+            0,
+            0
+          ],
           "name": "data_bus",
           "side": "right"
         }
       ],
-      "x": 400,
+      "width": 500,
+      "x": 700,
+      "y": 100
+    },
+    {
+      "color": [
+        0,
+        200,
+        0
+      ],
+      "entity": "bus_memory_controller",
+      "entity_offset": [
+        0,
+        0
+      ],
+      "height": 1400,
+      "library": "work",
+      "name": "U_2",
+      "name_offset": [
+        0,
+        0
+      ],
+      "ports": [
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "clk",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "reset_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_addr",
+          "side": "left"
+        },
+        {
+          "direction": "inout",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_data",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_wr_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_rd_n",
+          "side": "left"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_cs_n",
+          "side": "left"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_ack",
+          "side": "right"
+        },
+        {
+          "direction": "buffer",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "host_irq",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_addr",
+          "side": "right"
+        },
+        {
+          "direction": "inout",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_data",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_we_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_oe_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_ce_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_ub_n",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "mem_lb_n",
+          "side": "right"
+        },
+        {
+          "direction": "buffer",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "busy",
+          "side": "right"
+        },
+        {
+          "direction": "out",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "error_flag",
+          "side": "right"
+        },
+        {
+          "direction": "inout",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "debug_bus",
+          "side": "right"
+        },
+        {
+          "direction": "in",
+          "label_offset": [
+            0,
+            0
+          ],
+          "name": "config_in",
+          "side": "left"
+        }
+      ],
+      "width": 820,
+      "x": 1600,
       "y": 100
     }
   ],
@@ -94,71 +384,71 @@
       "coordinates": [
         [
           100,
-          300
+          200
         ],
         [
-          200,
-          500
+          -300,
+          200
         ],
         [
-          200,
-          500
+          -300,
+          200
         ],
         [
-          200,
-          500
+          -300,
+          200
         ],
         [
-          200,
-          500
+          -300,
+          200
         ]
       ]
     },
     {
       "coordinates": [
         [
-          300,
-          600
+          0,
+          200
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
         ],
         [
           500,
-          300
+          0
         ],
         [
           500,
-          300
+          0
         ],
         [
           500,
-          300
+          100
         ],
         [
           500,
-          300
-        ]
-      ]
-    },
-    {
-      "coordinates": [
+          200
+        ],
+        [
+          700,
+          200
+        ],
         [
           500,
-          500
+          200
         ],
         [
-          200,
-          300
+          500,
+          200
         ],
         [
-          200,
-          300
-        ],
-        [
-          200,
-          300
-        ],
-        [
-          200,
-          300
+          500,
+          200
         ]
       ]
     }

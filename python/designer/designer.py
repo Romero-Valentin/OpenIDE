@@ -1,20 +1,30 @@
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QColor, QPen, QPolygon
-from PySide6.QtCore import Qt, QRect, QPoint, QTimer
+from PySide6.QtGui import QPainter, QColor, QPen, QPolygon, QFont, QFontMetrics
+from PySide6.QtCore import Qt, QRect, QPoint, QTimer, QRectF
 from math import hypot
 import copy
 
-# Port layout constants
-PORT_SPACING = 20
-PORT_MARKER_SIZE = 6
-MODULE_MIN_W = 140
-MODULE_MIN_H = 60
-MODULE_PAD = 15
+# ---------------------------------------------------------------------------
+# Grid & layout constants
+# ---------------------------------------------------------------------------
+GRID_VISIBLE = 100          # visible dot grid spacing
+GRID_MODULE = 100           # module position snap
+GRID_MODULE_SIZE = 100      # module size snap (width / height)
+GRID_PORT = 100             # port absolute-position snap
+GRID_LABEL = 25             # label offset snap
 
-# Hit-testing radii in *screen pixels*.  Divided by the current zoom
-# factor at runtime to obtain world-coordinate thresholds.
-NODE_HIT_RADIUS_PX = 10   # must click very close to grab a single node
-SEGMENT_HIT_RADIUS_PX = 12  # slightly larger for segment/wire body clicks
+DEFAULT_MODULE_W = 300
+DEFAULT_MODULE_H = 500
+DEFAULT_MODULE_COLOR = [0, 200, 0]   # RGB (green)
+
+PORT_MARKER_SIZE = 24
+WORLD_FONT_SIZE = 48         # font size in world-coordinate units
+
+# Hit-testing radii (screen pixels — divided by zoom at runtime)
+NODE_HIT_RADIUS_PX = 10
+SEGMENT_HIT_RADIUS_PX = 12
+EDGE_HIT_RADIUS_PX = 8     # module-edge resize handle
+LABEL_HIT_PADDING = 4       # extra padding around text bounding boxes
 
 
 class DesignerWidget(QWidget):
@@ -34,11 +44,12 @@ class DesignerWidget(QWidget):
         self.current_wire = []
 
         # Selection state (multi-select)
-        self.selected_modules = set()  # Indices of selected modules
-        self.selected_wires = set()    # Indices of selected wires
+        self.selected_modules = set()
+        self.selected_wires = set()
+        self.selected_ports = set()   # set of (mod_idx, port_idx) tuples
 
         # Drag state for moving objects
-        self._drag_type = None  # 'move_selection', 'node', 'rubber_band'
+        self._drag_type = None  # 'move_selection','node','rubber_band','resize_edge','move_label','move_port_label','move_port'
         self._drag_wire_idx = None
         self._drag_node_idx = None
         self._move_start_pos = None
@@ -49,6 +60,22 @@ class DesignerWidget(QWidget):
         # Rubber-band selection rectangle
         self._rubber_band_start = None
         self._rubber_band_end = None
+
+        # Resize state
+        self._resize_mod_idx = None      # module being resized
+        self._resize_edge = None         # 'left' | 'right' | 'top' | 'bottom'
+        self._resize_start_raw = None    # cursor position at resize start
+        self._resize_orig = None         # snapshot of x, y, width, height before resize
+
+        # Label-drag state
+        self._label_mod_idx = None       # module index
+        self._label_key = None           # 'name_offset' | 'entity_offset'
+        self._label_port_idx = None      # port index (for port-label drag)
+        self._label_drag_start = None    # raw cursor at drag start
+        self._label_orig_offset = None   # original [ox, oy] before drag
+
+        # Port-drag state (repositioning a port to a different side)
+        self._port_drag_mod_idx = None
 
         # Viewport state
         self.zoom = 1.0
@@ -63,6 +90,12 @@ class DesignerWidget(QWidget):
         self._move_timer.timeout.connect(self._move_workspace)
         self._move_direction = None
         self._move_step = 20
+
+        # World-coordinate font used for all in-canvas text.
+        # Created once and reused by paintEvent and hit-testing methods.
+        self._world_font = QFont(self.font())
+        self._world_font.setPixelSize(WORLD_FONT_SIZE)
+        self._world_fm = QFontMetrics(self._world_font)
 
         # Optional callback invoked whenever the design state changes.
         # MainWindow sets this to keep the save-icon in sync.
@@ -123,6 +156,7 @@ class DesignerWidget(QWidget):
         self.modules, self.signals = self._undo_stack.pop()
         self.selected_modules.clear()
         self.selected_wires.clear()
+        self.selected_ports.clear()
         self.update()
         self._notify_design_changed()
 
@@ -136,6 +170,7 @@ class DesignerWidget(QWidget):
         self.modules, self.signals = self._redo_stack.pop()
         self.selected_modules.clear()
         self.selected_wires.clear()
+        self.selected_ports.clear()
         self.update()
         self._notify_design_changed()
 
@@ -145,8 +180,35 @@ class DesignerWidget(QWidget):
 
     @staticmethod
     def _snap_to_grid(pos):
-        """Snap (x, y) to nearest multiple of 100."""
-        return (round(pos[0] / 100) * 100, round(pos[1] / 100) * 100)
+        """Snap (x, y) to nearest multiple of GRID_VISIBLE (for wires)."""
+        g = GRID_VISIBLE
+        return (round(pos[0] / g) * g, round(pos[1] / g) * g)
+
+    @staticmethod
+    def _snap_module(val):
+        """Snap a single value to the module grid (GRID_MODULE)."""
+        return round(val / GRID_MODULE) * GRID_MODULE
+
+    @staticmethod
+    def _snap_module_size(val):
+        """Snap a single value to the module-size grid (GRID_MODULE_SIZE)."""
+        return round(val / GRID_MODULE_SIZE) * GRID_MODULE_SIZE
+
+    @staticmethod
+    def _snap_label(val):
+        """Snap a single value to the label grid (GRID_LABEL)."""
+        return round(val / GRID_LABEL) * GRID_LABEL
+
+    @staticmethod
+    def _valid_port_slots(start, end, grid=GRID_PORT):
+        """Return sorted multiples of *grid* strictly inside the open interval (start, end)."""
+        first = int((start // grid + 1) * grid)
+        slots = []
+        v = first
+        while v < end:
+            slots.append(v)
+            v += grid
+        return slots
 
     @staticmethod
     def _distance_to_segment(px, py, x1, y1, x2, y2):
@@ -206,32 +268,227 @@ class DesignerWidget(QWidget):
             n += 1
         return f'U_{n}'
 
-    def _module_rect(self, mod) -> QRect:
-        """Compute the bounding rectangle for a module."""
+    @staticmethod
+    def _module_rect(mod) -> QRect:
+        """Bounding rectangle (for painting / contains-tests)."""
+        return QRect(
+            mod.get('x', 0), mod.get('y', 0),
+            mod.get('width', DEFAULT_MODULE_W),
+            mod.get('height', DEFAULT_MODULE_H),
+        )
+
+    @staticmethod
+    def _module_edges(mod):
+        """Return (left, top, right, bottom) — true edge coordinates.
+
+        Unlike QRect.right() which returns x+w-1, this returns x+w.
+        """
         x = mod.get('x', 0)
         y = mod.get('y', 0)
+        return x, y, x + mod.get('width', DEFAULT_MODULE_W), y + mod.get('height', DEFAULT_MODULE_H)
+
+    def _compute_port_positions(self, mod):
+        """Return a list of (px, py) for every port, in port-list order.
+
+        Ports are distributed along their assigned side at GRID_PORT positions
+        that fall strictly inside the module boundary.
+        """
+        left, top, right, bottom = self._module_edges(mod)
+        cx, cy = (left + right) / 2, (top + bottom) / 2
+        sides = {'left': [], 'right': [], 'top': [], 'bottom': []}
+        for i, p in enumerate(mod.get('ports', [])):
+            sides[p.get('side', 'left')].append(i)
+
+        y_slots = self._valid_port_slots(top, bottom)
+        x_slots = self._valid_port_slots(left, right)
+
+        positions = [None] * len(mod.get('ports', []))
+        for side, indices in sides.items():
+            if side in ('left', 'right'):
+                edge_x = left if side == 'left' else right
+                for order, port_idx in enumerate(indices):
+                    py = y_slots[order] if order < len(y_slots) else int(cy)
+                    positions[port_idx] = (edge_x, py)
+            else:
+                edge_y = top if side == 'top' else bottom
+                for order, port_idx in enumerate(indices):
+                    px = x_slots[order] if order < len(x_slots) else int(cx)
+                    positions[port_idx] = (px, edge_y)
+        return positions
+
+    def _min_module_size(self, mod):
+        """Return (min_w, min_h) ensuring every port keeps a valid slot,
+        port-name labels do not overlap, and block names fit."""
         ports = mod.get('ports', [])
-        sides = {'left': 0, 'right': 0, 'top': 0, 'bottom': 0}
+        fm = self._world_fm
+        inset = GRID_LABEL     # port-label inward offset (25)
+        extra_pad = 50         # breathing room
+
+        sides = {'left': [], 'right': [], 'top': [], 'bottom': []}
         for p in ports:
-            sides[p.get('side', 'left')] += 1
-        max_vertical = max(sides['left'], sides['right'], 1)
-        max_horizontal = max(sides['top'], sides['bottom'], 0)
-        w = max(MODULE_MIN_W, (max_horizontal + 1) * PORT_SPACING + 2 * MODULE_PAD)
-        h = max(MODULE_MIN_H, (max_vertical + 1) * PORT_SPACING)
-        return QRect(x, y, w, h)
+            sides[p.get('side', 'left')].append(p)
+
+        # Port-count constraint: (count + 1) * GRID_PORT per axis
+        need_v = max(len(sides['left']), len(sides['right']))
+        need_h = max(len(sides['top']), len(sides['bottom']))
+        count_min_h = (need_v + 1) * GRID_PORT
+        count_min_w = (need_h + 1) * GRID_PORT
+
+        # Width = longest-left-port-name + longest-right-port-name
+        #       + max(entity-name, instance-name) + 50  (extra_pad)
+        left_tw = max((fm.horizontalAdvance(p.get('name', ''))
+                       for p in sides['left']), default=0)
+        right_tw = max((fm.horizontalAdvance(p.get('name', ''))
+                        for p in sides['right']), default=0)
+        inst_tw = fm.horizontalAdvance(mod.get('name', ''))
+        ent_tw = fm.horizontalAdvance(mod.get('entity', ''))
+        text_raw_w = (inset + left_tw + inset
+                      + max(inst_tw, ent_tw)
+                      + inset + right_tw + inset
+                      + extra_pad)
+
+        # Text-height constraint: top/bottom port names
+        top_th = (fm.height() + inset) if sides['top'] else 0
+        bot_th = (fm.height() + inset) if sides['bottom'] else 0
+        name_min_h = (top_th + WORLD_FONT_SIZE + bot_th) if (top_th or bot_th) else 0
+
+        # Snap UP so the minimum is never less than the requirement
+        g = GRID_MODULE_SIZE
+        raw_w = max(count_min_w, text_raw_w, g)
+        raw_h = max(count_min_h, name_min_h, g)
+        min_w = (int(raw_w) + g - 1) // g * g
+        min_h = (int(raw_h) + g - 1) // g * g
+        return min_w, min_h
 
     def _hit_test_module(self, raw_pos) -> int | None:
-        """Return the index of the topmost module whose rect contains *raw_pos*.
-
-        *raw_pos* should be the unsnapped world-coordinate cursor position
-        so that the test is pixel-accurate regardless of zoom.
-        """
+        """Return index of the topmost module whose rect contains *raw_pos*."""
         pt = QPoint(int(raw_pos[0]), int(raw_pos[1]))
         for idx in range(len(self.modules) - 1, -1, -1):
-            rect = self._module_rect(self.modules[idx])
-            if rect.contains(pt):
+            if self._module_rect(self.modules[idx]).contains(pt):
                 return idx
         return None
+
+    def _hit_test_edge(self, raw_pos):
+        """Return (module_idx, edge_name) if cursor is on a module edge, else (None, None)."""
+        threshold = EDGE_HIT_RADIUS_PX / max(self.zoom, 0.01)
+        rx, ry = raw_pos
+        for idx in range(len(self.modules) - 1, -1, -1):
+            left, top, right, bottom = self._module_edges(self.modules[idx])
+            # Quick rejection — must be near the module
+            if not (left - threshold <= rx <= right + threshold and
+                    top - threshold <= ry <= bottom + threshold):
+                continue
+            if abs(rx - left) < threshold and top - threshold <= ry <= bottom + threshold:
+                return idx, 'left'
+            if abs(rx - right) < threshold and top - threshold <= ry <= bottom + threshold:
+                return idx, 'right'
+            if abs(ry - top) < threshold and left - threshold <= rx <= right + threshold:
+                return idx, 'top'
+            if abs(ry - bottom) < threshold and left - threshold <= rx <= right + threshold:
+                return idx, 'bottom'
+        return None, None
+
+    def _hit_test_module_label(self, raw_pos):
+        """Return (module_idx, 'name_offset'|'entity_offset') or (None, None)."""
+        fm = self._world_fm
+        rx, ry = raw_pos
+        pad = LABEL_HIT_PADDING / max(self.zoom, 0.01)
+        for idx in range(len(self.modules) - 1, -1, -1):
+            mod = self.modules[idx]
+            rect = self._module_rect(mod)
+            # Instance name — default: centred inside block
+            name = mod.get('name', '')
+            if name:
+                off = mod.get('name_offset', [0, 0])
+                tw = fm.horizontalAdvance(name)
+                th = fm.height()
+                cx = rect.center().x() + off[0] - tw / 2
+                cy = rect.center().y() + off[1] - th / 2
+                if QRectF(cx - pad, cy - pad, tw + 2 * pad, th + 2 * pad).contains(rx, ry):
+                    return idx, 'name_offset'
+            # Entity name — default: centred above block
+            entity = mod.get('entity', '')
+            if entity:
+                off = mod.get('entity_offset', [0, 0])
+                tw = fm.horizontalAdvance(entity)
+                th = fm.height()
+                cx = rect.center().x() + off[0] - tw / 2
+                cy = rect.top() - 4 + off[1] - th
+                if QRectF(cx - pad, cy - pad, tw + 2 * pad, th + 2 * pad).contains(rx, ry):
+                    return idx, 'entity_offset'
+        return None, None
+
+    def _hit_test_port_label(self, raw_pos):
+        """Return (module_idx, port_idx) if a port name label is hit, else (None, None)."""
+        fm = self._world_fm
+        rx, ry = raw_pos
+        pad = LABEL_HIT_PADDING / max(self.zoom, 0.01)
+        for mod_idx in range(len(self.modules) - 1, -1, -1):
+            mod = self.modules[mod_idx]
+            positions = self._compute_port_positions(mod)
+            rect = self._module_rect(mod)
+            for port_idx, port in enumerate(mod.get('ports', [])):
+                pname = port.get('name', '')
+                if not pname or positions[port_idx] is None:
+                    continue
+                px, py = positions[port_idx]
+                side = port.get('side', 'left')
+                loff = port.get('label_offset', [0, 0])
+                lx, ly = self._default_port_label_pos(px, py, side, pname, fm)
+                lx += loff[0]
+                ly += loff[1]
+                tw, th = fm.horizontalAdvance(pname), fm.height()
+                if QRectF(lx - pad, ly - pad, tw + 2 * pad, th + 2 * pad).contains(rx, ry):
+                    return mod_idx, port_idx
+        return None, None
+
+    @staticmethod
+    def _default_port_label_pos(px, py, side, name, fm):
+        """Top-left of the port label text (inside the block by default).
+
+        Labels are offset by GRID_LABEL (25 units) toward the block
+        interior for readability.
+        """
+        tw = fm.horizontalAdvance(name)
+        th = fm.height()
+        inset = GRID_LABEL  # 25-unit inward offset
+        if side == 'left':
+            return px + inset, py - th / 2
+        elif side == 'right':
+            return px - inset - tw, py - th / 2
+        elif side == 'top':
+            return px - tw / 2, py + inset
+        else:  # bottom
+            return px - tw / 2, py - inset - th
+
+    def _hit_test_port_marker(self, raw_pos):
+        """Return (module_idx, port_idx) if a port marker is hit, else (None, None)."""
+        threshold = max(PORT_MARKER_SIZE, NODE_HIT_RADIUS_PX / max(self.zoom, 0.01))
+        rx, ry = raw_pos
+        for mod_idx in range(len(self.modules) - 1, -1, -1):
+            mod = self.modules[mod_idx]
+            positions = self._compute_port_positions(mod)
+            for port_idx in range(len(mod.get('ports', []))):
+                if positions[port_idx] is None:
+                    continue
+                px, py = positions[port_idx]
+                if hypot(rx - px, ry - py) < threshold:
+                    return mod_idx, port_idx
+        return None, None
+
+    @staticmethod
+    def _closest_module_side(mod, rx, ry):
+        """Return 'left'|'right'|'top'|'bottom' — the module edge closest to (rx, ry)."""
+        x = mod.get('x', 0)
+        y = mod.get('y', 0)
+        w = mod.get('width', DEFAULT_MODULE_W)
+        h = mod.get('height', DEFAULT_MODULE_H)
+        hw, hh = w / 2, h / 2
+        dx = (rx - (x + hw)) / max(hw, 1)
+        dy = (ry - (y + hh)) / max(hh, 1)
+        if abs(dx) > abs(dy):
+            return 'right' if dx > 0 else 'left'
+        return 'bottom' if dy > 0 else 'top'
 
     # ------------------------------------------------------------------
     # Optimal recenter
@@ -241,42 +498,28 @@ class DesignerWidget(QWidget):
         """Adjust zoom and offset so all modules and wires fit in the viewport."""
         points = []
         for mod in self.modules:
-            x = mod.get('x', 0)
-            y = mod.get('y', 0)
-            ports = mod.get('ports', [])
-            h = max(MODULE_MIN_H, (max(
-                sum(1 for p in ports if p.get('side') == 'left'),
-                sum(1 for p in ports if p.get('side') == 'right'),
-                1,
-            ) + 1) * PORT_SPACING)
-            points.append((x, y))
-            points.append((x + MODULE_MIN_W, y + h))
+            l, t, r, b = self._module_edges(mod)
+            points += [(l, t), (r, b)]
         for sig in self.signals:
             for coord in sig.get('coordinates', []):
                 points.append((coord[0], coord[1]))
-
         if not points:
             return
-
         min_x = min(p[0] for p in points)
         min_y = min(p[1] for p in points)
         max_x = max(p[0] for p in points)
         max_y = max(p[1] for p in points)
-
-        content_w = max_x - min_x
-        content_h = max_y - min_y
+        cw, ch = max_x - min_x, max_y - min_y
         margin = 50
-
-        if content_w == 0 and content_h == 0:
+        if cw == 0 and ch == 0:
             self.zoom = 1.0
             self.offset_x = self.width() / 2 - min_x
             self.offset_y = self.height() / 2 - min_y
         else:
-            zoom_x = (self.width() - 2 * margin) / max(content_w, 1)
-            zoom_y = (self.height() - 2 * margin) / max(content_h, 1)
-            self.zoom = max(min(zoom_x, zoom_y, 10.0), 0.01)
-            cx = (min_x + max_x) / 2
-            cy = (min_y + max_y) / 2
+            zx = (self.width() - 2 * margin) / max(cw, 1)
+            zy = (self.height() - 2 * margin) / max(ch, 1)
+            self.zoom = max(min(zx, zy, 10.0), 0.01)
+            cx, cy = (min_x + max_x) / 2, (min_y + max_y) / 2
             self.offset_x = self.width() / 2 - cx * self.zoom
             self.offset_y = self.height() / 2 - cy * self.zoom
         self.update()
@@ -331,91 +574,76 @@ class DesignerWidget(QWidget):
             gx += grid
 
     def _draw_modules(self, painter):
+        painter.setFont(self._world_font)
+        fm = self._world_fm
         for mod_idx, mod in enumerate(self.modules):
-            x = mod.get('x', 0)
-            y = mod.get('y', 0)
-            ports = mod.get('ports', [])
+            rect = self._module_rect(mod)
+            color = mod.get('color', DEFAULT_MODULE_COLOR)
+            painter.setBrush(QColor(*color))
 
-            # Count ports per side to size the block
-            sides = {'left': [], 'right': [], 'top': [], 'bottom': []}
-            for p in ports:
-                sides[p.get('side', 'left')].append(p)
-            max_vertical = max(len(sides['left']), len(sides['right']), 1)
-            max_horizontal = max(len(sides['top']), len(sides['bottom']), 0)
-            w = max(MODULE_MIN_W, (max_horizontal + 1) * PORT_SPACING + 2 * MODULE_PAD)
-            h = max(MODULE_MIN_H, (max_vertical + 1) * PORT_SPACING)
-
-            rect = QRect(x, y, w, h)
-            painter.setBrush(QColor(0, 200, 0))
-            # Highlight selected modules with blue boundaries
+            # Highlight selected modules with blue boundary
             if mod_idx in self.selected_modules:
-                painter.setPen(QPen(QColor(0, 100, 255), 3))
+                painter.setPen(QPen(QColor(0, 100, 255), 6))
             else:
                 painter.setPen(QPen(Qt.black, 2))
             painter.drawRect(rect)
 
-            # Draw instance name (top) and entity name (center)
-            painter.setPen(QPen(Qt.black, 1))
-            painter.drawText(rect, Qt.AlignCenter, mod.get('name', ''))
+            # Instance name (centred inside, plus user offset)
+            name = mod.get('name', '')
+            if name:
+                off = mod.get('name_offset', [0, 0])
+                painter.setPen(QPen(Qt.black, 1))
+                tw = fm.horizontalAdvance(name)
+                th = fm.height()
+                tx = rect.center().x() + off[0] - tw / 2
+                ty = rect.center().y() + off[1] + th / 4
+                painter.drawText(int(tx), int(ty), name)
+
+            # Entity name (centred above block, plus user offset)
             entity = mod.get('entity', '')
             if entity:
-                painter.drawText(
-                    rect.left(), rect.top() - 4,
-                    rect.width(), 14,
-                    Qt.AlignCenter, entity,
-                )
+                off = mod.get('entity_offset', [0, 0])
+                painter.setPen(QPen(Qt.black, 1))
+                tw = fm.horizontalAdvance(entity)
+                tx = rect.center().x() + off[0] - tw / 2
+                ty = rect.top() - 4 + off[1]
+                painter.drawText(int(tx), int(ty), entity)
 
-            # Draw ports per side
-            for side, port_list in sides.items():
-                for idx, port in enumerate(port_list):
-                    self._draw_port(painter, rect, port, side, idx, len(port_list))
+            # Draw ports
+            positions = self._compute_port_positions(mod)
+            for port_idx, port in enumerate(mod.get('ports', [])):
+                if positions[port_idx] is None:
+                    continue
+                px, py = positions[port_idx]
+                side = port.get('side', 'left')
+                direction = port.get('direction', 'in')
+                pname = port.get('name', '')
 
-    def _draw_port(self, painter, rect, port, side, idx, count):
-        direction = port.get('direction', 'in')
-        name = port.get('name', '')
-        s = PORT_MARKER_SIZE
+                # Port marker (highlighted when selected)
+                is_port_selected = (mod_idx, port_idx) in self.selected_ports
+                if is_port_selected:
+                    painter.setPen(QPen(QColor(0, 200, 255), 3))
+                    painter.setBrush(QColor(0, 200, 255))
+                else:
+                    painter.setPen(QPen(QColor(0, 0, 255), 2))
+                    painter.setBrush(QColor(0, 0, 255))
+                if direction in ('in', 'out'):
+                    self._draw_arrow_port(painter, px, py, side, direction, PORT_MARKER_SIZE)
+                else:
+                    self._draw_diamond_port(painter, px, py, side, PORT_MARKER_SIZE)
 
-        # Compute anchor point on the block edge
-        if side == 'left':
-            px = rect.left()
-            py = rect.top() + PORT_SPACING + idx * PORT_SPACING
-        elif side == 'right':
-            px = rect.right()
-            py = rect.top() + PORT_SPACING + idx * PORT_SPACING
-        elif side == 'top':
-            px = rect.left() + MODULE_PAD + idx * PORT_SPACING
-            py = rect.top()
-        else:  # bottom
-            px = rect.left() + MODULE_PAD + idx * PORT_SPACING
-            py = rect.bottom()
-
-        painter.setPen(QPen(QColor(0, 0, 255), 2))
-        painter.setBrush(QColor(0, 0, 255))
-
-        if direction in ('in', 'out'):
-            self._draw_arrow_port(painter, px, py, side, direction, s)
-        else:
-            self._draw_diamond_port(painter, px, py, side, s)
-
-        # Draw port name
-        painter.setPen(QPen(Qt.black, 1))
-        painter.setBrush(Qt.NoBrush)
-        if side == 'left':
-            painter.drawText(px - 5 * len(name) - 8, py + 4, name)
-        elif side == 'right':
-            painter.drawText(px + s + 4, py + 4, name)
-        elif side == 'top':
-            painter.save()
-            painter.translate(px, py - s - 2)
-            painter.rotate(-90)
-            painter.drawText(0, 4, name)
-            painter.restore()
-        else:
-            painter.save()
-            painter.translate(px, py + s + 12)
-            painter.rotate(-90)
-            painter.drawText(0, 4, name)
-            painter.restore()
+                # Port label (inside block by default, plus user offset)
+                if pname:
+                    loff = port.get('label_offset', [0, 0])
+                    lx, ly = self._default_port_label_pos(px, py, side, pname, fm)
+                    lx += loff[0]
+                    ly += loff[1]
+                    if is_port_selected:
+                        painter.setPen(QPen(QColor(0, 200, 255), 1))
+                    else:
+                        painter.setPen(QPen(Qt.black, 1))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawText(int(lx), int(ly + fm.ascent()), pname)
 
     @staticmethod
     def _draw_arrow_port(painter, px, py, side, direction, s):
@@ -458,22 +686,23 @@ class DesignerWidget(QWidget):
 
     @staticmethod
     def _draw_diamond_port(painter, px, py, side, s):
-        """Draw a diamond marker for inout/buffer ports."""
+        """Draw a diamond marker for inout/buffer ports, touching the module edge."""
+        hs = s // 2
         if side in ('left', 'right'):
-            cx = px - s if side == 'left' else px + s
+            cx = px - hs if side == 'left' else px + hs
             painter.drawPolygon(QPolygon([
-                QPoint(cx, py - s // 2),
-                QPoint(cx - s // 2, py),
-                QPoint(cx, py + s // 2),
-                QPoint(cx + s // 2, py),
+                QPoint(cx, py - hs),
+                QPoint(cx - hs, py),
+                QPoint(cx, py + hs),
+                QPoint(cx + hs, py),
             ]))
         else:
-            cy = py - s if side == 'top' else py + s
+            cy = py - hs if side == 'top' else py + hs
             painter.drawPolygon(QPolygon([
-                QPoint(px - s // 2, cy),
-                QPoint(px, cy - s // 2),
-                QPoint(px + s // 2, cy),
-                QPoint(px, cy + s // 2),
+                QPoint(px - hs, cy),
+                QPoint(px, cy - hs),
+                QPoint(px + hs, cy),
+                QPoint(px, cy + hs),
             ]))
 
     def _draw_signals(self, painter):
@@ -611,6 +840,7 @@ class DesignerWidget(QWidget):
         self.current_wire = []
         self.selected_modules.clear()
         self.selected_wires.clear()
+        self.selected_ports.clear()
         self._drag_type = None
         self._drag_wire_idx = None
         self._drag_node_idx = None
@@ -620,6 +850,16 @@ class DesignerWidget(QWidget):
         self._move_orig_wire_positions = None
         self._rubber_band_start = None
         self._rubber_band_end = None
+        self._resize_mod_idx = None
+        self._resize_edge = None
+        self._resize_start_raw = None
+        self._resize_orig = None
+        self._label_mod_idx = None
+        self._label_key = None
+        self._label_port_idx = None
+        self._label_drag_start = None
+        self._label_orig_offset = None
+        self._port_drag_mod_idx = None
         self.update()
 
     def _delete_selected(self):
@@ -639,6 +879,7 @@ class DesignerWidget(QWidget):
                 del self.modules[idx]
         self.selected_modules.clear()
         self.selected_wires.clear()
+        self.selected_ports.clear()
         self._drag_type = None
         self._move_start_pos = None
         self._move_orig_coords = None
@@ -676,26 +917,90 @@ class DesignerWidget(QWidget):
     def _handle_select_click(self, pos, raw_pos, ctrl=False):
         """Handle a click in select mode.
 
-        Hit-testing is performed against *raw_pos* (unsnapped world coords)
-        so that accuracy is independent of the snap grid.  Thresholds are
-        expressed in screen pixels and converted to world units using the
-        current zoom factor.
-
-        *pos* (snapped) is only used for the starting position of a drag
-        so that movement deltas stay on-grid.
-
-        - Plain click on an object: select it exclusively (clears previous).
-        - CTRL+click: toggle the object in/out of the current selection.
-        - Click on empty space: start rubber-band selection.
+        Hit-testing priority (most specific first):
+          1. Port markers  (select / reposition port)
+          2. Module edges  (resize)
+          3. Port labels   (move port-name text)
+          4. Module labels (instance name / entity name)
+          5. Wire nodes
+          6. Wire segments
+          7. Module body   (move)
+          8. Empty space   (rubber-band)
         """
-        # Use the unsnapped cursor for hit testing
         rx, ry = raw_pos
 
-        hit_module = self._hit_test_module(raw_pos)
+        # --- 1. Port markers ---
+        pm_mod, pm_port = self._hit_test_port_marker(raw_pos)
+        if pm_mod is not None:
+            key = (pm_mod, pm_port)
+            if ctrl:
+                if key in self.selected_ports:
+                    self.selected_ports.discard(key)
+                else:
+                    self.selected_ports.add(key)
+                self._drag_type = None
+            else:
+                if key not in self.selected_ports:
+                    self.selected_modules.clear()
+                    self.selected_wires.clear()
+                    self.selected_ports.clear()
+                    self.selected_ports.add(key)
+                self._save_undo()
+                self._drag_type = 'move_port'
+                self._port_drag_mod_idx = pm_mod
+            self.update()
+            return
+
+        # Non-CTRL click outside a port marker clears port selection
+        if not ctrl:
+            self.selected_ports.clear()
+
+        # --- 2. Module edges (resize) ---
+        edge_mod, edge_name = self._hit_test_edge(raw_pos)
+        if edge_mod is not None:
+            mod = self.modules[edge_mod]
+            self._save_undo()
+            self._drag_type = 'resize_edge'
+            self._resize_mod_idx = edge_mod
+            self._resize_edge = edge_name
+            self._resize_start_raw = raw_pos
+            self._resize_orig = {
+                'x': mod['x'], 'y': mod['y'],
+                'width': mod.get('width', DEFAULT_MODULE_W),
+                'height': mod.get('height', DEFAULT_MODULE_H),
+            }
+            self.update()
+            return
+
+        # --- 3. Port label ---
+        pl_mod, pl_port = self._hit_test_port_label(raw_pos)
+        if pl_mod is not None:
+            port = self.modules[pl_mod]['ports'][pl_port]
+            self._save_undo()
+            self._drag_type = 'move_port_label'
+            self._label_mod_idx = pl_mod
+            self._label_port_idx = pl_port
+            self._label_drag_start = raw_pos
+            self._label_orig_offset = list(port.get('label_offset', [0, 0]))
+            self.update()
+            return
+
+        # --- 4. Module labels ---
+        ml_mod, ml_key = self._hit_test_module_label(raw_pos)
+        if ml_mod is not None:
+            self._save_undo()
+            self._drag_type = 'move_label'
+            self._label_mod_idx = ml_mod
+            self._label_key = ml_key
+            self._label_drag_start = raw_pos
+            self._label_orig_offset = list(self.modules[ml_mod].get(ml_key, [0, 0]))
+            self.update()
+            return
+
+        # --- 5 & 6. Wire nodes / segments ---
         hit_wire = None
         hit_node = None
 
-        # --- 1. Try to hit a wire node (small radius) ---
         node_threshold = NODE_HIT_RADIUS_PX / max(self.zoom, 0.01)
         best_node_dist = node_threshold
         for idx, sig in enumerate(self.signals):
@@ -706,7 +1011,6 @@ class DesignerWidget(QWidget):
                     hit_wire = idx
                     hit_node = nidx
 
-        # --- 2. Try to hit a wire segment (slightly larger radius) ---
         seg_threshold = SEGMENT_HIT_RADIUS_PX / max(self.zoom, 0.01)
         best_seg_dist = seg_threshold
         hit_seg_wire = None
@@ -722,48 +1026,25 @@ class DesignerWidget(QWidget):
                     best_seg_dist = d
                     hit_seg_wire = idx
 
-        # If a segment was hit but no node was, prefer the segment.
-        # This prevents accidentally grabbing a corner node when the
-        # user intended to drag the whole wire.
         if hit_wire is None and hit_seg_wire is not None:
             hit_wire = hit_seg_wire
             hit_node = None
 
-        # --- Decide action based on what was hit ---
-        if hit_module is not None:
-            if ctrl:
-                # CTRL+click: toggle this module in/out of the selection
-                if hit_module in self.selected_modules:
-                    self.selected_modules.discard(hit_module)
-                else:
-                    self.selected_modules.add(hit_module)
-                self._drag_type = None
-            else:
-                # Plain click on a module
-                if hit_module not in self.selected_modules:
-                    self.selected_modules.clear()
-                    self.selected_wires.clear()
-                    self.selected_modules.add(hit_module)
-                # Snapshot state BEFORE any movement occurs
-                self._save_undo()
-                self._drag_type = 'move_selection'
-                self._move_start_pos = pos
-                self._save_move_origins()
+        # --- 6. Module body ---
+        hit_module = self._hit_test_module(raw_pos)
 
-        elif hit_wire is not None and hit_node is not None:
+        # --- Decide action ---
+        if hit_wire is not None and hit_node is not None:
             if ctrl:
-                # CTRL+click on a node: toggle the wire in the selection
                 if hit_wire in self.selected_wires:
                     self.selected_wires.discard(hit_wire)
                 else:
                     self.selected_wires.add(hit_wire)
                 self._drag_type = None
             else:
-                # Plain click on a wire node — drag that single node only
                 self.selected_modules.clear()
                 self.selected_wires.clear()
                 self.selected_wires.add(hit_wire)
-                # Snapshot state BEFORE any movement occurs
                 self._save_undo()
                 self._drag_type = 'node'
                 self._drag_wire_idx = hit_wire
@@ -775,26 +1056,39 @@ class DesignerWidget(QWidget):
 
         elif hit_wire is not None:
             if ctrl:
-                # CTRL+click on a wire segment: toggle in selection
                 if hit_wire in self.selected_wires:
                     self.selected_wires.discard(hit_wire)
                 else:
                     self.selected_wires.add(hit_wire)
                 self._drag_type = None
             else:
-                # Plain click on a wire segment — move all selected together
                 if hit_wire not in self.selected_wires:
                     self.selected_modules.clear()
                     self.selected_wires.clear()
                     self.selected_wires.add(hit_wire)
-                # Snapshot state BEFORE any movement occurs
+                self._save_undo()
+                self._drag_type = 'move_selection'
+                self._move_start_pos = pos
+                self._save_move_origins()
+
+        elif hit_module is not None:
+            if ctrl:
+                if hit_module in self.selected_modules:
+                    self.selected_modules.discard(hit_module)
+                else:
+                    self.selected_modules.add(hit_module)
+                self._drag_type = None
+            else:
+                if hit_module not in self.selected_modules:
+                    self.selected_modules.clear()
+                    self.selected_wires.clear()
+                    self.selected_modules.add(hit_module)
                 self._save_undo()
                 self._drag_type = 'move_selection'
                 self._move_start_pos = pos
                 self._save_move_origins()
 
         else:
-            # Clicked on empty space — start rubber-band selection
             if not ctrl:
                 self.selected_modules.clear()
                 self.selected_wires.clear()
@@ -820,15 +1114,12 @@ class DesignerWidget(QWidget):
             return
 
         if self._drag_type == 'rubber_band':
-            # Finalize rubber-band: select all objects within the rectangle
             self._finalize_rubber_band()
-        elif self._drag_type in ('move_selection', 'node'):
-            # Undo snapshot was taken at drag-start.  If the user released
-            # without actually moving anything, discard it to keep the
-            # undo stack clean.
+        elif self._drag_type in ('move_selection', 'node', 'resize_edge',
+                                  'move_label', 'move_port_label', 'move_port'):
             self._pop_undo_if_unchanged()
 
-        # Reset drag state (keep selection visible)
+        # Reset all drag state (keep selection)
         self._drag_type = None
         self._drag_wire_idx = None
         self._drag_node_idx = None
@@ -838,6 +1129,16 @@ class DesignerWidget(QWidget):
         self._move_orig_wire_positions = None
         self._rubber_band_start = None
         self._rubber_band_end = None
+        self._resize_mod_idx = None
+        self._resize_edge = None
+        self._resize_start_raw = None
+        self._resize_orig = None
+        self._label_mod_idx = None
+        self._label_key = None
+        self._label_port_idx = None
+        self._label_drag_start = None
+        self._label_orig_offset = None
+        self._port_drag_mod_idx = None
         self.update()
 
     def _finalize_rubber_band(self):
@@ -852,6 +1153,7 @@ class DesignerWidget(QWidget):
         )
         self.selected_modules.clear()
         self.selected_wires.clear()
+        self.selected_ports.clear()
 
         # Select modules whose bounding rect intersects the selection rect
         for idx, mod in enumerate(self.modules):
@@ -880,6 +1182,16 @@ class DesignerWidget(QWidget):
             if selected:
                 self.selected_wires.add(idx)
 
+        # Select ports whose markers fall inside the selection rect
+        for mod_idx, mod in enumerate(self.modules):
+            positions = self._compute_port_positions(mod)
+            for port_idx in range(len(mod.get('ports', []))):
+                if positions[port_idx] is None:
+                    continue
+                px, py = positions[port_idx]
+                if sel_rect.contains(QPoint(int(px), int(py))):
+                    self.selected_ports.add((mod_idx, port_idx))
+
     def mouseDoubleClickEvent(self, event):
         if self.drawing_wire and len(self.current_wire) > 1:
             # Snapshot BEFORE adding the new wire
@@ -891,7 +1203,8 @@ class DesignerWidget(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event):
-        pos = self._snap_to_grid(self._transform_mouse(event))
+        raw_pos = self._transform_mouse(event)
+        pos = self._snap_to_grid(raw_pos)
 
         if self.mode == "draw" and self.drawing_wire and self.current_wire:
             last = self.current_wire[-1]
@@ -905,26 +1218,131 @@ class DesignerWidget(QWidget):
 
         elif self.mode == "select" and self._drag_type is not None:
             if self._drag_type == 'rubber_band':
-                # Update rubber-band rectangle with unsnapped coords
-                raw = self._transform_mouse(event)
-                self._rubber_band_end = raw
+                self._rubber_band_end = raw_pos
+
             elif self._drag_type == 'node' and self._drag_wire_idx is not None:
-                # Move a single wire node
                 self.signals[self._drag_wire_idx]['coordinates'][self._drag_node_idx] = pos
+
             elif self._drag_type == 'move_selection':
-                # Move all selected modules and wires together
                 dx = pos[0] - self._move_start_pos[0]
                 dy = pos[1] - self._move_start_pos[1]
+                # Snap the movement delta to GRID_MODULE for module positions
+                snap_dx = self._snap_module(dx)
+                snap_dy = self._snap_module(dy)
                 if self._move_orig_module_positions:
                     for idx, (ox, oy) in self._move_orig_module_positions.items():
-                        self.modules[idx]['x'] = ox + dx
-                        self.modules[idx]['y'] = oy + dy
+                        self.modules[idx]['x'] = ox + snap_dx
+                        self.modules[idx]['y'] = oy + snap_dy
                 if self._move_orig_wire_positions:
                     for idx, orig_coords in self._move_orig_wire_positions.items():
                         self.signals[idx]['coordinates'] = [
                             (x + dx, y + dy) for (x, y) in orig_coords
                         ]
+
+            elif self._drag_type == 'resize_edge':
+                self._apply_resize(raw_pos)
+
+            elif self._drag_type == 'move_label':
+                self._apply_label_drag(raw_pos)
+
+            elif self._drag_type == 'move_port_label':
+                self._apply_port_label_drag(raw_pos)
+
+            elif self._drag_type == 'move_port':
+                self._apply_port_reposition(raw_pos)
+
             self.update()
+
+    # ------------------------------------------------------------------
+    # Resize helpers
+    # ------------------------------------------------------------------
+
+    def _apply_resize(self, raw_pos):
+        """Resize the module edge being dragged, clamped to min size.
+
+        Width and height snap to GRID_MODULE_SIZE (100-unit grid).
+        """
+        mod = self.modules[self._resize_mod_idx]
+        orig = self._resize_orig
+        min_w, min_h = self._min_module_size(mod)
+        rx, ry = raw_pos
+
+        if self._resize_edge == 'right':
+            new_w = self._snap_module_size(rx - orig['x'])
+            mod['width'] = max(new_w, min_w)
+        elif self._resize_edge == 'left':
+            right = orig['x'] + orig['width']
+            new_w = max(self._snap_module_size(right - rx), min_w)
+            mod['width'] = new_w
+            mod['x'] = right - new_w
+        elif self._resize_edge == 'bottom':
+            new_h = self._snap_module_size(ry - orig['y'])
+            mod['height'] = max(new_h, min_h)
+        elif self._resize_edge == 'top':
+            bottom = orig['y'] + orig['height']
+            new_h = max(self._snap_module_size(bottom - ry), min_h)
+            mod['height'] = new_h
+            mod['y'] = bottom - new_h
+
+    # ------------------------------------------------------------------
+    # Label drag helpers
+    # ------------------------------------------------------------------
+
+    def _apply_label_drag(self, raw_pos):
+        """Update the module label offset based on cursor movement.
+
+        The offset snaps to GRID_LABEL (25-unit grid).
+        """
+        dx = raw_pos[0] - self._label_drag_start[0]
+        dy = raw_pos[1] - self._label_drag_start[1]
+        self.modules[self._label_mod_idx][self._label_key] = [
+            self._snap_label(self._label_orig_offset[0] + dx),
+            self._snap_label(self._label_orig_offset[1] + dy),
+        ]
+
+    def _apply_port_label_drag(self, raw_pos):
+        """Update the port label offset based on cursor movement.
+
+        The offset snaps to GRID_LABEL (25-unit grid).
+        """
+        dx = raw_pos[0] - self._label_drag_start[0]
+        dy = raw_pos[1] - self._label_drag_start[1]
+        port = self.modules[self._label_mod_idx]['ports'][self._label_port_idx]
+        port['label_offset'] = [
+            self._snap_label(self._label_orig_offset[0] + dx),
+            self._snap_label(self._label_orig_offset[1] + dy),
+        ]
+
+    def _apply_port_reposition(self, raw_pos):
+        """Move all selected ports on the dragged module to the closest edge.
+
+        The move is only applied if the target side has enough free
+        GRID_PORT slots for the incoming ports.  Otherwise the ports
+        stay on their current side to prevent overlapping.
+        """
+        mod = self.modules[self._port_drag_mod_idx]
+        new_side = self._closest_module_side(mod, raw_pos[0], raw_pos[1])
+
+        # Count how many ports already sit on the target side (not
+        # counting the ones being moved — they might come from there).
+        moving = {pidx for midx, pidx in self.selected_ports
+                  if midx == self._port_drag_mod_idx}
+        existing = sum(1 for i, p in enumerate(mod['ports'])
+                       if p.get('side', 'left') == new_side and i not in moving)
+        incoming = len(moving)
+
+        # Available slots on the target side
+        left, top, right, bottom = self._module_edges(mod)
+        if new_side in ('left', 'right'):
+            capacity = len(self._valid_port_slots(top, bottom))
+        else:
+            capacity = len(self._valid_port_slots(left, right))
+
+        if existing + incoming > capacity:
+            return  # not enough room — abort
+
+        for pidx in moving:
+            mod['ports'][pidx]['side'] = new_side
 
     @staticmethod
     def _make_90_degree_mid(last, pos):

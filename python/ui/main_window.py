@@ -319,6 +319,7 @@ class MainWindow(QMainWindow):
 
     def show_add_module_dialog(self):
         from modules.vhdl_parser import parse_vhdl_file
+        from designer.designer import DEFAULT_MODULE_W, DEFAULT_MODULE_H, DEFAULT_MODULE_COLOR
 
         filepaths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -352,19 +353,35 @@ class MainWindow(QMainWindow):
                 continue
             instance_name = custom_name.strip() if custom_name.strip() else instance_name
 
-            # Snapshot BEFORE adding the module so CTRL+Z can revert it
-            self.designer_widget._save_undo()
-            count = len(self.designer_widget.modules)
-            self.designer_widget.modules.append({
+            # Ensure every port carries a label_offset for movable port names
+            ports = parsed['ports']
+            for p in ports:
+                p.setdefault('label_offset', [0, 0])
+
+            # Build the module dict so we can compute the minimum size
+            # required to fit all ports without overlap.
+            new_mod = {
                 'name': instance_name,
                 'entity': parsed['entity'],
                 'library': parsed['library'],
-                'ports': parsed['ports'],
-                'x': 100 + count * 200,
+                'ports': ports,
+                'x': 100 + len(self.designer_widget.modules) * 400,
                 'y': 100,
-            })
+                'width': DEFAULT_MODULE_W,
+                'height': DEFAULT_MODULE_H,
+                'color': list(DEFAULT_MODULE_COLOR),
+                'name_offset': [0, 0],
+                'entity_offset': [0, 0],
+            }
+            min_w, min_h = self.designer_widget._min_module_size(new_mod)
+            new_mod['width'] = max(DEFAULT_MODULE_W, min_w)
+            new_mod['height'] = max(DEFAULT_MODULE_H, min_h)
+
+            # Snapshot BEFORE adding the module so CTRL+Z can revert it
+            self.designer_widget._save_undo()
+            self.designer_widget.modules.append(new_mod)
             self.designer_widget._notify_design_changed()
-            self._log("import_vhdl_ok", f"{instance_name} entity={parsed['entity']} ports={len(parsed['ports'])}")
+            self._log("import_vhdl_ok", f"{instance_name} entity={parsed['entity']} ports={len(ports)}")
 
         self.designer_widget.update()
 

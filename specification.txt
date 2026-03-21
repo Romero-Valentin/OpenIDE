@@ -1,39 +1,89 @@
 OpenIDE Software Specification
 
 1. Overview
-OpenIDE is an IDE for FPGA engineers to visually connect VHDL modules, enabling the creation of structural FPGA designs. 
-The application provides a graphical interface for adding modules, wiring signals, and managing project files. The user opens a software window to add VHDL modules and wire them together.
+OpenIDE is an IDE for FPGA engineers to visually connect VHDL modules, enabling the creation of structural FPGA designs.
+The application provides a graphical interface for adding modules, wiring signals, and managing project files.
 
 2. Functional Requirements
+
 2.1 Module Management
 	- Users can add, remove, and configure VHDL modules.
-	- Each module is displayed as a green block with its name and ports (in/out, type).
+	- Each module is displayed as a coloured block with its name and ports (in/out, type).
 	- Module coordinates are integer only.
-2.2 Grid
-	- Each position that is a multiple of 100 displays a small, furtive dot acting as a snap grid.
-	- The grid is dynamically generated based on the current viewport (only visible grid points are drawn) to maintain high performance.
+
+2.2 Grids
+	- Visible grid: every position that is a multiple of 100 displays a small, furtive dot.
+	  The grid is dynamically generated based on the current viewport (only visible grid points are drawn).
+	- Module position grid (invisible): module positions snap to a 100-unit grid.
+	- Module size grid (invisible): module width and height snap to a 100-unit grid.
+	- Port grid (invisible): ports always snap to the 100-unit grid so wires can connect.
+	- Label grid (invisible): label offsets (instance name, entity name, port names)
+	  snap to a 25-unit grid.
+
 2.3 Wiring & Signals
 	- Each wire between modules represents a signal (std_logic, std_logic_vector, etc.).
-	- Ports are visualized as blue arrows (input: pointing to the wire, output: pointing out of the wire).
 	- Wires are drawn manually: the user clicks to start, then draws lines with 90° angles.
 	- Each wire is saved as a list of integer coordinates to retrace the whole wire.
 	- Wires can only be placed at positions that are multiples of 100.
 	- Wires are not automatically connected; user interaction is required.
-2.4 VHDL Block (Module)
-	- Each block has a library attribute, defaulted to "work".
-	- Each block has an entity name inherited from the VHDL entity declaration.
-	- Each block has a user-defined instance name, defaulted to "U_N" where N is the lowest integer (starting from 0) not already used in the design.
-	- Each block has ports with direction: "in", "out", "inout", or "buffer". Port definitions are inherited from the VHDL entity.
-	- Port placement defaults to the left side for inputs, and the right side for all other directions.
-	- Ports can be freely repositioned to the left, right, top, or bottom side of the block.
-	- "in" and "out" ports are drawn as small arrowhead-only markers (no tail line). The arrowhead points toward the block for "in", and away from the block for "out".
-	- "inout" and "buffer" ports are drawn as small diamond markers.
-2.5 Menus
+
+2.4 VHDL Block (Module) — Properties
+	Each block stores the following properties:
+	- library: defaults to "work".
+	- entity: inherited from the VHDL entity declaration.
+	- instance name: user-defined, defaults to "U_N" (N = lowest unused integer starting from 0).
+	- position (x, y): snapped to the 100-unit grid.
+	- size (width, height): snapped to the 100-unit grid. Default size is 300 × 500.
+	  On import, the block is automatically enlarged so that:
+	    • every port has a valid 100-grid slot on its side,
+	    • the minimum width accommodates the longest left-side port name,
+	      the longest right-side port name, and the wider of the instance
+	      name or entity name, plus 50 units of padding,
+	    • port-name labels do not overlap.
+	- color: the fill colour of the block (default green).
+	- ports: list of port definitions inherited from the VHDL entity (see §2.5).
+
+2.5 VHDL Block — Ports
+	- Each port has a direction: "in", "out", "inout", or "buffer".
+	- Default placement: inputs on the left side, all other directions on the right.
+	- Ports can be repositioned by clicking the port marker and dragging it toward
+	  a different edge of the block. The port snaps to the closest edge on release.
+	  The move is rejected if the target edge has no free 100-grid slot.
+	  Multiple ports can be selected (CTRL+click or rubber-band) and repositioned together.
+	- Port positions always snap to the 100-unit visible grid along the block edge.
+	- "in" and "out" ports are drawn as arrowhead-only markers (24 world units, no tail line).
+	  The arrowhead points toward the block for "in", and away for "out".
+	- "inout" and "buffer" ports are drawn as diamond markers (24 world units),
+	  positioned so one vertex touches the module edge.
+	- Selected ports are highlighted in cyan (marker and label).
+	- Port name labels are positioned inside the block by default, offset 25 units
+	  (one label-grid step) inward from the port marker for readability.
+	- Each port name can be independently dragged to a new offset relative to the port
+	  (snapped to a 25-unit grid). When the port itself moves (e.g. resize, side change),
+	  the label moves with it.
+
+2.6 VHDL Block — Resizing
+	- The user can resize a block by clicking and dragging any of its four edges
+	  (top, bottom, left, right).
+	- Resizing snaps width and height to the 100-unit grid.
+	- A block cannot be shrunk smaller than the space needed to keep every port on a
+	  valid 100-grid position within the block boundary. Attempting to shrink beyond
+	  this limit clamps the size.
+
+2.7 VHDL Block — Text Labels
+	- Two text labels appear by default on each block:
+	  1. Instance name — centred inside the block.
+	  2. Entity name — centred above the block.
+	- Both labels can be independently clicked and dragged to a custom position
+	  (offset relative to the block origin, snapped to a 25-unit grid).
+	  Moving the block moves the labels with it.
+
+2.8 Menus
 	- 1st menu: Open a project, options, and space for future features.
 	- 2nd menu: Draw a structural designer.
 	- 3rd menu: Reserved/empty for future expansion.
 
-2.6 Tool-Bar & Object Selection
+2.9 Tool-Bar & Object Selection
 	- A tool-bar is present at the top of the window, allowing the user to:
 		-> Open project
 		-> Save project
@@ -42,55 +92,68 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> Import VHDL module
 		-> Optimal recenter
 	- Each tool-bar option is displayed as a small PNG icon only (no text label on the button).
-	- When the mouse hovers over an icon for 0.5s, a tooltip appears explaining the icon's function.
+	- When the mouse hovers over an icon for 0.5 s, a tooltip appears explaining the icon's function.
 	- When 'Save project' is chosen:
 		- If no project file path is known yet, open a file dialog so the user can choose where to save.
 		- If a project file path is already known, save directly to that file without showing a dialog.
-		- After a successful save, display a temporary notification in the top-right corner of the window that reads "Saved" and automatically disappears after 1 second.
+		- After a successful save, display a temporary "Saved" notification in the top-right corner (1 s).
 	- The 'Save project' icon reflects the current save state:
 		- Orange icon: the design has unsaved changes, or no save has been performed yet.
 		- Green icon: the design matches the last saved state (nothing to save).
 		- After a successful save the icon turns green.
-		- Any modification to the design (move, add, delete, etc.) turns the icon orange.
-		- Undo (CTRL+Z) or redo (CTRL+E) that restores the design to the exact saved state turns the icon back to green.
+		- Any modification (move, resize, add, delete, etc.) turns the icon orange.
+		- Undo / redo that restores the exact saved state turns the icon back to green.
 	- When 'Select object' is chosen, the user can:
-		- Click and drag on empty space to draw a selection rectangle. On release, every object (module or wire) that is entirely or partially inside the rectangle becomes selected.
-		- Hold CTRL and left-click an object to toggle it in/out of the current selection (additive selection).
-		- Click and drag a wire segment (not on a node) to move the entire wire.
+		- Click and drag on empty space to draw a selection rectangle. On release, every
+		  object (module, wire, or port) entirely or partially inside becomes selected.
+		- Hold CTRL and left-click an object to toggle it in/out of the current selection.
+		- Click and drag a wire segment to move the entire wire.
 		- Click and drag a wire node to move that single node.
-		- Click and drag a VHDL block to move it.
-		- When multiple objects are selected, dragging any one of them moves all selected objects together.
-	- When 'Import VHDL module' is chosen, a file browser opens at the last-used directory (initially the launch directory). The user can select one or multiple VHDL files to import.
-		- The last selected directory is persisted so subsequent imports reopen the same location.
-	- When 'Optimal recenter' is chosen, the viewport position and zoom are adjusted to fit all modules and wires in the design within the visible area.
+		- Click and drag a VHDL block body to move it.
+		- Click and drag a block edge to resize it (see §2.6).
+		- Click and drag a port marker to reposition the port to a different block edge
+		  (see §2.5).
+		- Click and drag a module label (instance name or entity name) to reposition the label.
+		- Click and drag a port label to reposition the port name text.
+		- When multiple objects are selected, dragging any one of them moves all selected
+		  objects together.
+	- When 'Import VHDL module' is chosen, a file browser opens at the last-used directory.
+	  The user can select one or multiple VHDL files to import. The last-used directory is
+	  persisted across imports.
+	- When 'Optimal recenter' is chosen, the viewport and zoom are adjusted to fit all
+	  modules and wires in the visible area.
 
 3. Technical Requirements
+
 3.1 Drawing & Performance
 	- All graphics are vector-based for high performance and scalability.
-	- Drawing format is optimized for vector operations.
+	- All in-canvas text (labels, port names) uses a world-coordinate font size of 48 units,
+	  so it scales naturally with zoom and is proportionate to the module blocks.
 	- User can zoom and unzoom the workspace for detailed or overview editing.
-	- Zoom and unzoom are centered on the mouse cursor position, so the point under the cursor stays fixed.
-	- Zoom-in is capped at a maximum factor of 10.0; there is no limit on zoom-out.
-	- Object hit-testing (clicking to select or drag)
-		- Uses the exact cursor position, not the snapped grid position, so that selection accuracy is independent of the grid spacing.
-		- Hit-test radius is defined in screen pixels and scales with the zoom level, ensuring consistent clickable areas at any zoom.
-	- When an object is selected, its visual appearance changes to indicate selection:
-		- Wires (signals): highlighted in blue with a slightly thicker line and larger label font.
-		- VHDL blocks: the module boundary is drawn in blue.
+	- Zoom and unzoom are centred on the mouse cursor position.
+	- Zoom-in is capped at 10.0; there is no limit on zoom-out.
+	- Object hit-testing:
+		- Uses the exact cursor position (not the snapped position).
+		- Hit-test radius is in screen pixels and scales with zoom.
+	- Selection highlight:
+		- Wires: blue with a slightly thicker line and larger label font.
+		- VHDL blocks: thick blue boundary (6 world units).
+		- Ports: cyan marker and label.
 
 3.2 Action Remembering (Undo / Redo)
 	- Every user action that modifies the design is recorded in an action history.
 	- Recorded actions include (but are not limited to):
-		- Moving one or more elements from position A to position B.
-		- Deleting one or more elements.
-		- Adding one or more elements.
-	- CTRL+Z undoes the most recent action (repeatable to undo multiple steps).
-	- CTRL+E redoes the last undone action (repeatable to redo multiple steps).
+		- Moving, resizing, or recolouring one or more elements.
+		- Deleting or adding one or more elements.
+		- Moving a label offset.
+	- CTRL+Z undoes the most recent action (repeatable).
+	- CTRL+E redoes the last undone action (repeatable).
 	- The redo history is cleared whenever a new action is performed after an undo.
 
 3.3 File Format & Git Compatibility
 	- All saved files are text-based, human-readable, and optimized for Git version control (easy to merge, track, and understand).
 	- File formats are designed for easy commit, merge, and review.
+
 3.4 Code Architecture
 	- The codebase must be modular, partitioned, and non-monolithic to ensure flexibility and upgradability.
 	- Clear separation of concerns between UI, logic, and data handling.
@@ -102,19 +165,19 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Every user input and software event is tracked in logs for high debuggability.
 
 5. Extensibility & Upgradability
-	- The application must be designed for easy upgrades and feature additions.
+	- Designed for easy upgrades and feature additions.
 	- Partitioned code structure to allow independent module updates.
 	- The code must not be monolithic, ensuring long-term flexibility.
 
 6. User Experience
 	- Intuitive interface for module placement, wiring, and project management.
-	- Visual clarity and responsiveness prioritized.
-	- User interaction for drawing wires and placing modules is clear and direct.
-	- User can move the workspace view using arrow keys for navigation.
-	- Pressing Escape cancels any ongoing action (drawing, moving, etc).
-	- Pressing CTRL+Z reverses actions (undo) as many times as possible during the session.
-	- Pressing CTRL+S runs "Save Project".
-	- Pressing SUPPR (Delete) deletes all currently selected objects (VHDL block, wires, etc...)
+	- Visual clarity and responsiveness prioritised.
+	- Arrow keys — move the workspace view.
+	- ESCAPE     — cancels any ongoing action (drawing, moving, resizing, etc.).
+	- CTRL+Z     — undo.
+	- CTRL+E     — redo. 
+	- CTRL+S     — save project.
+	- SUPPR      — delete all selected objects.
 
 7. Future Considerations
 	- Menu and feature placeholders for future growth.
