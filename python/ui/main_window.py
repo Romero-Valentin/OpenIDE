@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QSize, QTimer, QPoint, QEvent
 from ui.toast import ToastNotification
+import copy
 import os
 
 
@@ -54,17 +55,27 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         icon_dir = os.path.join(os.path.dirname(__file__), "icons")
+
+        # Pre-load the two save-icon variants (green = saved, orange = unsaved)
+        self._save_icon_green = QIcon(os.path.join(icon_dir, "save_green_icon.png"))
+        self._save_icon_orange = QIcon(os.path.join(icon_dir, "save_orange_icon.png"))
+
         actions = [
             ("Open Project",       "open_project_icon.png",  self.load_project,          "Open a project file"),
-            ("Save Project",       "save_icon.png",          self.save_project,           "Save the current project"),
+            ("Save Project",       None,                     self.save_project,           "Save the current project"),
             ("Select Object",      "select_icon.png",        self.select_object_mode,     "Select and move wires or nodes"),
             ("Draw Wire",          "draw_wire_icon.png",     self.draw_wire_mode,         "Draw a new wire"),
             ("Import VHDL Module", "import_vhdl_icon.png",   self.show_add_module_dialog, "Import a VHDL module"),
             ("Optimal Recenter",   "recenter_icon.png",      self.optimal_recenter,       "Fit all modules and wires in view"),
         ]
         for name, icon_file, slot, tip in actions:
-            icon_path = os.path.join(icon_dir, icon_file)
-            act = QAction(QIcon(icon_path), name, self)
+            if icon_file is None:
+                # Save button — starts with the orange (unsaved) icon
+                act = QAction(self._save_icon_orange, name, self)
+                self._save_action = act
+            else:
+                icon_path = os.path.join(icon_dir, icon_file)
+                act = QAction(QIcon(icon_path), name, self)
             # Store the short name as tooltip text in the action's data
             # property.  We show it ourselves after a 0.5 s delay.
             # setToolTip("") prevents Qt from auto-showing the action text.
@@ -207,6 +218,35 @@ class MainWindow(QMainWindow):
         central.setLayout(layout)
         self.setCentralWidget(central)
 
+        # Wire up the design-changed callback so we can update the save icon
+        self.designer_widget.on_design_changed = self._on_design_changed
+
+        # Snapshot representing the last-saved state.  None = never saved.
+        self._saved_state = None
+
+    # ------------------------------------------------------------------
+    # Save-icon state tracking
+    # ------------------------------------------------------------------
+
+    def _on_design_changed(self):
+        """Called by DesignerWidget whenever the design state mutates.
+
+        Compares the current design to the last-saved snapshot and swaps
+        the save-button icon between green (clean) and orange (dirty).
+        """
+        self._refresh_save_icon()
+
+    def _refresh_save_icon(self):
+        """Set the save icon to green if the design matches the saved state,
+        orange otherwise."""
+        if self._saved_state is not None:
+            saved_mods, saved_sigs = self._saved_state
+            if (self.designer_widget.modules == saved_mods
+                    and self.designer_widget.signals == saved_sigs):
+                self._save_action.setIcon(self._save_icon_green)
+                return
+        self._save_action.setIcon(self._save_icon_orange)
+
     # ------------------------------------------------------------------
     # Keyboard shortcuts
     # ------------------------------------------------------------------
@@ -244,6 +284,13 @@ class MainWindow(QMainWindow):
         }
         DataManager(logger=self._logger).save_project(data, filepath)
         self._project_filepath = filepath
+
+        # Record the saved state so the icon can track dirty/clean
+        self._saved_state = (
+            copy.deepcopy(self.designer_widget.modules),
+            copy.deepcopy(self.designer_widget.signals),
+        )
+        self._refresh_save_icon()
         self._toast.show_message("Saved", style="success")
 
     def load_project(self):
@@ -259,6 +306,12 @@ class MainWindow(QMainWindow):
             self.designer_widget.update()
             # Remember the path so subsequent saves go to the same file
             self._project_filepath = filename
+            # Treat the loaded state as the "saved" baseline
+            self._saved_state = (
+                copy.deepcopy(self.designer_widget.modules),
+                copy.deepcopy(self.designer_widget.signals),
+            )
+            self._refresh_save_icon()
 
     # ------------------------------------------------------------------
     # Dialogs
@@ -310,6 +363,7 @@ class MainWindow(QMainWindow):
                 'x': 100 + count * 200,
                 'y': 100,
             })
+            self.designer_widget._notify_design_changed()
             self._log("import_vhdl_ok", f"{instance_name} entity={parsed['entity']} ports={len(parsed['ports'])}")
 
         self.designer_widget.update()
@@ -327,6 +381,7 @@ class MainWindow(QMainWindow):
             self.designer_widget.modules = [
                 m for m in self.designer_widget.modules if m['name'] != name
             ]
+            self.designer_widget._notify_design_changed()
             self.designer_widget.update()
 
     def show_add_signal_dialog(self):
@@ -372,4 +427,5 @@ class MainWindow(QMainWindow):
             'dst_mod': dst_mod,
             'dst_port': dst_port,
         })
+        self.designer_widget._notify_design_changed()
         self.designer_widget.update()

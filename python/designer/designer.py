@@ -64,6 +64,10 @@ class DesignerWidget(QWidget):
         self._move_direction = None
         self._move_step = 20
 
+        # Optional callback invoked whenever the design state changes.
+        # MainWindow sets this to keep the save-icon in sync.
+        self.on_design_changed = None
+
     # ------------------------------------------------------------------
     # Undo / Redo
     #
@@ -73,6 +77,11 @@ class DesignerWidget(QWidget):
     # drag begins; if the user releases without actually moving, the
     # snapshot is discarded (_pop_undo_if_unchanged).
     # ------------------------------------------------------------------
+
+    def _notify_design_changed(self):
+        """Invoke the external callback (if set) after a state change."""
+        if self.on_design_changed:
+            self.on_design_changed()
 
     def _save_undo(self):
         """Snapshot the current (pre-mutation) state onto the undo stack.
@@ -98,6 +107,11 @@ class DesignerWidget(QWidget):
         prev_modules, prev_signals = self._undo_stack[-1]
         if prev_modules == self.modules and prev_signals == self.signals:
             self._undo_stack.pop()
+        else:
+            # The drag actually mutated the design — notify now that the
+            # move is finalised (the earlier _save_undo call fired before
+            # the position change, so its notification saw clean state).
+            self._notify_design_changed()
 
     def undo(self):
         """Revert to the previous state.  The current state is pushed to redo."""
@@ -110,6 +124,7 @@ class DesignerWidget(QWidget):
         self.selected_modules.clear()
         self.selected_wires.clear()
         self.update()
+        self._notify_design_changed()
 
     def redo(self):
         """Re-apply the last undone action."""
@@ -122,6 +137,7 @@ class DesignerWidget(QWidget):
         self.selected_modules.clear()
         self.selected_wires.clear()
         self.update()
+        self._notify_design_changed()
 
     # ------------------------------------------------------------------
     # Grid helpers
@@ -627,6 +643,7 @@ class DesignerWidget(QWidget):
         self._move_start_pos = None
         self._move_orig_coords = None
         self._move_orig_module_positions = None
+        self._notify_design_changed()
         self.update()
 
     # ------------------------------------------------------------------
@@ -870,6 +887,7 @@ class DesignerWidget(QWidget):
             self.drawing_wire = False
             self.signals.append({'coordinates': self.current_wire})
             self.current_wire = []
+            self._notify_design_changed()
             self.update()
 
     def mouseMoveEvent(self, event):

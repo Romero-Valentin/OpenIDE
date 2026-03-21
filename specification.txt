@@ -47,6 +47,12 @@ The application provides a graphical interface for adding modules, wiring signal
 		- If no project file path is known yet, open a file dialog so the user can choose where to save.
 		- If a project file path is already known, save directly to that file without showing a dialog.
 		- After a successful save, display a temporary notification in the top-right corner of the window that reads "Saved" and automatically disappears after 1 second.
+	- The 'Save project' icon reflects the current save state:
+		- Orange icon: the design has unsaved changes, or no save has been performed yet.
+		- Green icon: the design matches the last saved state (nothing to save).
+		- After a successful save the icon turns green.
+		- Any modification to the design (move, add, delete, etc.) turns the icon orange.
+		- Undo (CTRL+Z) or redo (CTRL+E) that restores the design to the exact saved state turns the icon back to green.
 	- When 'Select object' is chosen, the user can:
 		- Click and drag on empty space to draw a selection rectangle. On release, every object (module or wire) that is entirely or partially inside the rectangle becomes selected.
 		- Hold CTRL and left-click an object to toggle it in/out of the current selection (additive selection).
@@ -67,7 +73,7 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Zoom-in is capped at a maximum factor of 10.0; there is no limit on zoom-out.
 	- Object hit-testing (clicking to select or drag)
 		- Uses the exact cursor position, not the snapped grid position, so that selection accuracy is independent of the grid spacing.
-		- Rdius is defined in screen pixels and scale with the zoom level, ensuring consistent clickable areas at any zoom.
+		- Hit-test radius is defined in screen pixels and scales with the zoom level, ensuring consistent clickable areas at any zoom.
 	- When an object is selected, its visual appearance changes to indicate selection:
 		- Wires (signals): highlighted in blue with a slightly thicker line and larger label font.
 		- VHDL blocks: the module boundary is drawn in blue.
