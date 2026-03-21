@@ -41,8 +41,8 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> Draw wire
 		-> Import VHDL module
 		-> Optimal recenter
-	- Each tool-bar option is shown with a small PNG icon.
-	- When the mouse hovers over an icon for 0.5s, a text bubble appears explaining the icon's function.
+	- Each tool-bar option is displayed as a small PNG icon only (no text label on the button).
+	- When the mouse hovers over an icon for 0.5s, a tooltip appears explaining the icon's function.
 	- When 'Save project' is chosen:
 		- If no project file path is known yet, open a file dialog so the user can choose where to save.
 		- If a project file path is already known, save directly to that file without showing a dialog.

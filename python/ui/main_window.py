@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QToolBar, QToolTip,
+    QMainWindow, QWidget, QVBoxLayout, QToolBar, QToolTip, QToolButton,
     QFileDialog, QInputDialog, QMessageBox,
 )
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QSize, QTimer, QPoint, QEvent
 from ui.toast import ToastNotification
 import os
 
@@ -14,9 +14,15 @@ class MainWindow(QMainWindow):
         self._logger = logger
         self.setWindowTitle("OpenIDE - FPGA Structural Designer")
         self.resize(1000, 700)
-        self._tooltip_timer = None
         self._last_import_dir = os.getcwd()
         self._project_filepath = None  # Known save path (None = never saved)
+
+        # Tooltip hover state — a single reusable timer for the whole toolbar
+        self._tooltip_timer = QTimer(self)
+        self._tooltip_timer.setSingleShot(True)
+        self._tooltip_timer.timeout.connect(self._show_pending_tooltip)
+        self._pending_tooltip_action = None
+
         self._init_menu()
         self._init_toolbar()
         self._init_central_widget()
@@ -32,45 +38,93 @@ class MainWindow(QMainWindow):
     # Toolbar
     # ------------------------------------------------------------------
 
+    # Display size for toolbar icons (the source PNGs are 384×384).
+    _TOOLBAR_ICON_SIZE = 42
+
     def _init_toolbar(self):
+        """Build the main toolbar with PNG icons.
+
+        Each entry maps a human-readable name to its icon file, slot,
+        and tooltip text.  Icons live in ui/icons/ as 384×384 PNGs and
+        are scaled down to _TOOLBAR_ICON_SIZE by Qt.
+        """
         toolbar = QToolBar("Main Toolbar")
+        toolbar.setIconSize(QSize(self._TOOLBAR_ICON_SIZE, self._TOOLBAR_ICON_SIZE))
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.addToolBar(toolbar)
+
         icon_dir = os.path.join(os.path.dirname(__file__), "icons")
         actions = [
-            ("Open Project", "open.png", self.load_project, "Open a project file"),
-            ("Save Project", "save.png", self.save_project, "Save the current project"),
-            ("Select Object", "select.png", self.select_object_mode, "Select and move wires or nodes"),
-            ("Draw Wire", "wire.png", self.draw_wire_mode, "Draw a new wire"),
-            ("Import VHDL Module", "import.png", self.show_add_module_dialog, "Import a VHDL module"),
-            ("Optimal Recenter", "recenter.png", self.optimal_recenter, "Fit all modules and wires in view"),
+            ("Open Project",       "open_project_icon.png",  self.load_project,          "Open a project file"),
+            ("Save Project",       "save_icon.png",          self.save_project,           "Save the current project"),
+            ("Select Object",      "select_icon.png",        self.select_object_mode,     "Select and move wires or nodes"),
+            ("Draw Wire",          "draw_wire_icon.png",     self.draw_wire_mode,         "Draw a new wire"),
+            ("Import VHDL Module", "import_vhdl_icon.png",   self.show_add_module_dialog, "Import a VHDL module"),
+            ("Optimal Recenter",   "recenter_icon.png",      self.optimal_recenter,       "Fit all modules and wires in view"),
         ]
-        for name, icon, slot, tip in actions:
-            icon_path = os.path.join(icon_dir, icon)
+        for name, icon_file, slot, tip in actions:
+            icon_path = os.path.join(icon_dir, icon_file)
             act = QAction(QIcon(icon_path), name, self)
-            act.setToolTip(tip)
+            # Store the short name as tooltip text in the action's data
+            # property.  We show it ourselves after a 0.5 s delay.
+            # setToolTip("") prevents Qt from auto-showing the action text.
+            act.setData(name)
+            act.setToolTip("")
             act.triggered.connect(slot)
             toolbar.addAction(act)
+
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        for action in toolbar.actions():
-            action.hovered.connect(lambda act=action: self._delayed_tooltip(act))
 
-    def _delayed_tooltip(self, action):
-        if self._tooltip_timer:
-            self._tooltip_timer.stop()
-        self._tooltip_timer = QTimer(self)
-        self._tooltip_timer.setSingleShot(True)
-        self._tooltip_timer.timeout.connect(lambda: self._show_tooltip(action))
+        # Block Qt's built-in instant tooltips on every toolbar button.
+        # Qt re-generates tooltips from the action text internally, so
+        # clearing them is not enough — we install an event filter that
+        # swallows ToolTip events.  Our custom 0.5 s delayed tooltip
+        # (shown via QToolTip.showText) bypasses this filter.
+        for btn in toolbar.findChildren(QToolButton):
+            btn.installEventFilter(self)
+
+        # Add spacing between buttons
+        toolbar.setStyleSheet("QToolButton { margin: 0 4px; }")
+
+        # Connect hover signal for the delayed tooltip
+        for action in toolbar.actions():
+            action.hovered.connect(lambda a=action: self._on_toolbar_hover(a))
+
+    # ------------------------------------------------------------------
+    # Delayed toolbar tooltip (0.5 s hover)
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        """Suppress Qt's built-in instant tooltips on toolbar buttons.
+
+        Our custom tooltip is shown via _show_pending_tooltip after 0.5 s,
+        using QToolTip.showText — that path does not trigger this filter.
+        """
+        if event.type() == QEvent.ToolTip and isinstance(obj, QToolButton):
+            return True  # swallow the event
+        return super().eventFilter(obj, event)
+
+    def _on_toolbar_hover(self, action):
+        """Start (or restart) the 0.5 s timer when the cursor enters a button."""
+        self._pending_tooltip_action = action
         self._tooltip_timer.start(500)
 
-    def _show_tooltip(self, action):
+    def _show_pending_tooltip(self):
+        """Show the tooltip for the action the cursor was last hovering over."""
+        action = self._pending_tooltip_action
+        if action is None:
+            return
         toolbar = self.findChild(QToolBar)
-        if toolbar:
-            QToolTip.showText(
-                self.mapToGlobal(toolbar.actionGeometry(action).center()),
-                action.toolTip(),
-                toolbar,
-            )
+        if toolbar is None:
+            return
+        tip = action.data()  # tooltip text stored in action data
+        if not tip:
+            return
+        # Position the tooltip at the center of the toolbar button
+        btn_rect = toolbar.actionGeometry(action)
+        global_pos = toolbar.mapToGlobal(btn_rect.center())
+        QToolTip.showText(global_pos, tip, toolbar)
 
     # ------------------------------------------------------------------
     # Mode switching
