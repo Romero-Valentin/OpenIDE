@@ -1,9 +1,10 @@
-"""Options dialog for viewing and editing keyboard shortcuts.
+"""Options dialog for application settings and keyboard shortcuts.
 
-Opens a table of all registered actions.  Each row shows the action
-name and its current key-combos.  The user can click a combo cell,
-press a new key-combo to reassign it, or click *Reset Defaults* to
-restore factory settings.
+The dialog contains two sections:
+
+1. **Performance** — toggleable paint-time overlay.
+2. **Keyboard Shortcuts** — table of all registered actions with
+   click-to-capture reassignment and conflict detection.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QLabel, QMessageBox, QAbstractItemView,
+    QCheckBox, QGroupBox,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
@@ -108,41 +110,62 @@ class _ComboCaptureWidget(QLabel):
 # Main options dialog
 # -----------------------------------------------------------------------
 
-class KeybindingsDialog(QDialog):
-    """Modal dialog for editing keyboard shortcuts."""
+class OptionsDialog(QDialog):
+    """Modal dialog for application settings and keyboard shortcuts."""
 
-    def __init__(self, keybindings: KeyBindings, parent=None):
+    def __init__(self, keybindings: KeyBindings, *,
+                 show_fps: bool = False, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Keyboard Shortcuts")
-        self.setMinimumSize(520, 400)
+        self.setWindowTitle("Options")
+        self.setMinimumSize(540, 480)
         self._kb = keybindings
         self._changed = False
 
         layout = QVBoxLayout(self)
 
-        # Instructions
-        hint = QLabel("Click a shortcut cell, then press a new key combination to reassign it.")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        # --- Performance section -------------------------------------------
+        perf_group = QGroupBox("Performance")
+        perf_layout = QVBoxLayout(perf_group)
+        self._fps_checkbox = QCheckBox(
+            "Show paint-time overlay (bottom-right corner)")
+        self._fps_checkbox.setChecked(show_fps)
+        perf_layout.addWidget(self._fps_checkbox)
+        layout.addWidget(perf_group)
 
-        # Table
+        # --- Keyboard Shortcuts section ------------------------------------
+        kb_group = QGroupBox("Keyboard Shortcuts")
+        kb_layout = QVBoxLayout(kb_group)
+
+        hint = QLabel(
+            "Click a shortcut cell, then press a new key combination "
+            "to reassign it.")
+        hint.setWordWrap(True)
+        kb_layout.addWidget(hint)
+
         self._table = QTableWidget()
         self._table.setColumnCount(2)
         self._table.setHorizontalHeaderLabels(["Action", "Shortcuts"])
         self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents)
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        layout.addWidget(self._table)
+        kb_layout.addWidget(self._table)
 
         self._populate()
 
-        # Buttons
-        btn_layout = QHBoxLayout()
+        kb_btn_layout = QHBoxLayout()
         self._btn_reset = QPushButton("Reset Defaults")
         self._btn_reset.clicked.connect(self._reset_defaults)
-        btn_layout.addWidget(self._btn_reset)
+        kb_btn_layout.addWidget(self._btn_reset)
+        kb_btn_layout.addStretch()
+        kb_layout.addLayout(kb_btn_layout)
+
+        layout.addWidget(kb_group)
+
+        # --- Dialog buttons ------------------------------------------------
+        btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self._btn_ok = QPushButton("OK")
         self._btn_ok.clicked.connect(self.accept)
@@ -241,3 +264,12 @@ class KeybindingsDialog(QDialog):
     @property
     def changed(self) -> bool:
         return self._changed
+
+    @property
+    def show_fps(self) -> bool:
+        """Return the current state of the FPS-overlay checkbox."""
+        return self._fps_checkbox.isChecked()
+
+
+# Backward-compatible alias
+KeybindingsDialog = OptionsDialog

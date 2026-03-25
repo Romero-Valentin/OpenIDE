@@ -2,7 +2,10 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QColor, QPen, QPolygon, QFont, QFontMetrics
 from PySide6.QtCore import Qt, QRect, QPoint, QTimer, QRectF
 from math import hypot
+import collections
 import copy
+import heapq
+import time
 
 # ---------------------------------------------------------------------------
 # Grid & layout constants
@@ -25,6 +28,8 @@ NODE_HIT_RADIUS_PX = 10
 SEGMENT_HIT_RADIUS_PX = 12
 EDGE_HIT_RADIUS_PX = 8     # module-edge resize handle
 LABEL_HIT_PADDING = 4       # extra padding around text bounding boxes
+
+DEFAULT_ZOOM = 0.25         # initial zoom level (farther out than 1.0)
 
 
 class DesignerWidget(QWidget):
@@ -80,7 +85,7 @@ class DesignerWidget(QWidget):
         self._port_drag_primary_idx = None # port_idx of the clicked port
 
         # Viewport state
-        self.zoom = 1.0
+        self.zoom = DEFAULT_ZOOM
         self.offset_x = 0
         self.offset_y = 0
 
@@ -107,6 +112,13 @@ class DesignerWidget(QWidget):
 
         # Clipboard for copy/paste (deep-copied module/wire dicts)
         self._clipboard = None   # {'modules': [...], 'signals': [...]}
+
+        # Paint-time overlay — toggled via Options dialog
+        self.show_fps = False
+        self._paint_ms = 0.0             # last paintEvent duration in ms
+        self._paint_history: collections.deque[float] = collections.deque(maxlen=100)
+        self._paint_p1 = 0.0            # 1 % low  (2nd-worst of last 100)
+        self._paint_p01 = 0.0           # 0.1 % low (worst of last 100)
 
         # Keybindings — set by MainWindow after construction.
         # If None, no keyboard actions are processed.
@@ -588,7 +600,7 @@ class DesignerWidget(QWidget):
         cw, ch = max_x - min_x, max_y - min_y
         margin = 50
         if cw == 0 and ch == 0:
-            self.zoom = 1.0
+            self.zoom = DEFAULT_ZOOM
             self.offset_x = self.width() / 2 - min_x
             self.offset_y = self.height() / 2 - min_y
         else:
@@ -605,6 +617,8 @@ class DesignerWidget(QWidget):
     # ------------------------------------------------------------------
 
     def paintEvent(self, event):
+        t0 = time.perf_counter()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.save()
@@ -618,6 +632,30 @@ class DesignerWidget(QWidget):
         self._draw_rubber_band(painter)
 
         painter.restore()
+
+        # --- Paint-time overlay (screen-space, bottom-right) ---
+        if self.show_fps:
+            self._paint_ms = (time.perf_counter() - t0) * 1000
+            self._paint_history.append(self._paint_ms)
+            top2 = heapq.nlargest(2, self._paint_history)
+            self._paint_p01 = top2[0]
+            self._paint_p1 = top2[1] if len(top2) > 1 else top2[0]
+            text = (f"{self._paint_ms:.1f} ms  |  "
+                    f"1%: {self._paint_p1:.1f} ms  |  "
+                    f"0.1%: {self._paint_p01:.1f} ms")
+            font = painter.font()
+            font.setPixelSize(13)
+            painter.setFont(font)
+            fm = QFontMetrics(font)
+            tw = fm.horizontalAdvance(text) + 12
+            th = fm.height() + 6
+            rx = self.width() - tw - 6
+            ry = self.height() - th - 6
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.drawRoundedRect(rx, ry, tw, th, 4, 4)
+            painter.setPen(QColor(0, 255, 0))
+            painter.drawText(rx + 6, ry + fm.ascent() + 3, text)
 
     def _visible_rect(self):
         """Return the workspace-coordinate bounding box currently visible."""
@@ -841,11 +879,10 @@ class DesignerWidget(QWidget):
         wy = (mouse_y - self.offset_y) / self.zoom
 
         delta = event.angleDelta().y()
-        old_zoom = self.zoom
-        if delta > 0:
-            self.zoom = min(self.zoom + 0.1, 10.0)
-        else:
-            self.zoom = max(self.zoom - 0.1, 0.01)
+        # Multiplicative zoom: each scroll step scales by a fixed ratio so
+        # the zoom feels equally progressive at every magnification level.
+        factor = 1.15 if delta > 0 else 1 / 1.15
+        self.zoom = max(min(self.zoom * factor, 10.0), 0.01)
 
         # Adjust offset so the same workspace point stays under the cursor
         self.offset_x = mouse_x - wx * self.zoom

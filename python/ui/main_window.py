@@ -7,12 +7,19 @@ from PySide6.QtCore import Qt, QSize, QTimer, QPoint, QEvent
 from data.keybindings import KeyBindings
 from ui.toast import ToastNotification
 import copy
+import json
 import os
 
 # Path for persisted keybindings (next to the executable / main.py)
 _KEYBINDINGS_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "keybindings.json",
+)
+
+# Path for persisted application settings
+_SETTINGS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "settings.json",
 )
 
 
@@ -256,24 +263,54 @@ class MainWindow(QMainWindow):
         self._save_action.setIcon(self._save_icon_orange)
 
     # ------------------------------------------------------------------
-    # Keybindings
+    # Settings & Keybindings
     # ------------------------------------------------------------------
 
     def _init_keybindings(self):
-        """Load keybindings from disk and wire them into the designer."""
+        """Load keybindings and application settings, then wire into designer."""
         self._keybindings = KeyBindings.load(_KEYBINDINGS_PATH)
         self.designer_widget.keybindings = self._keybindings
         self.designer_widget._save_callback = self.save_project
+        self._load_settings()
+
+    def _load_settings(self):
+        """Load application settings from disk and apply to widgets."""
+        self._settings: dict = {}
+        if os.path.isfile(_SETTINGS_PATH):
+            try:
+                with open(_SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    self._settings = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        self.designer_widget.show_fps = self._settings.get("show_fps", False)
+
+    def _save_settings(self):
+        """Persist current application settings to disk."""
+        self._settings["show_fps"] = self.designer_widget.show_fps
+        os.makedirs(os.path.dirname(_SETTINGS_PATH) or ".", exist_ok=True)
+        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(self._settings, f, indent=2, sort_keys=True)
 
     def _open_options_dialog(self):
-        """Open the keyboard-shortcuts editor."""
-        from ui.options_dialog import KeybindingsDialog
+        """Open the application options dialog."""
+        from ui.options_dialog import OptionsDialog
 
-        dlg = KeybindingsDialog(self._keybindings, parent=self)
-        if dlg.exec() and dlg.changed:
-            self._keybindings.save(_KEYBINDINGS_PATH)
-            self.designer_widget.keybindings = self._keybindings
-            self._log("keybindings_saved", _KEYBINDINGS_PATH)
+        dlg = OptionsDialog(
+            self._keybindings,
+            show_fps=self.designer_widget.show_fps,
+            parent=self,
+        )
+        if dlg.exec():
+            # Apply FPS overlay toggle
+            self.designer_widget.show_fps = dlg.show_fps
+            self.designer_widget.update()
+            self._save_settings()
+            # Save keybindings if changed
+            if dlg.changed:
+                self._keybindings.save(_KEYBINDINGS_PATH)
+                self.designer_widget.keybindings = self._keybindings
+                self._log("keybindings_saved", _KEYBINDINGS_PATH)
+            self._log("options_saved")
 
     # ------------------------------------------------------------------
     # Save / Load
@@ -343,7 +380,10 @@ class MainWindow(QMainWindow):
 
     def show_add_module_dialog(self):
         from modules.vhdl_parser import parse_vhdl_file
-        from designer.designer import DEFAULT_MODULE_W, DEFAULT_MODULE_H, DEFAULT_MODULE_COLOR
+        from designer.designer import (
+            DEFAULT_MODULE_W, DEFAULT_MODULE_H, DEFAULT_MODULE_COLOR,
+            GRID_MODULE,
+        )
 
         filepaths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -358,6 +398,8 @@ class MainWindow(QMainWindow):
         self._last_import_dir = os.path.dirname(filepaths[0])
         self._log("import_vhdl_browse", f"dir={self._last_import_dir} files={len(filepaths)}")
 
+        # --- Pass 1: parse files and build module dicts (without positions) ---
+        new_modules: list[dict] = []
         for fpath in filepaths:
             parsed = parse_vhdl_file(fpath)
             if parsed is None:
@@ -382,15 +424,12 @@ class MainWindow(QMainWindow):
             for p in ports:
                 p.setdefault('label_offset', [0, 0])
 
-            # Build the module dict so we can compute the minimum size
-            # required to fit all ports without overlap.
             new_mod = {
                 'name': instance_name,
                 'entity': parsed['entity'],
                 'library': parsed['library'],
                 'ports': ports,
-                'x': 100 + len(self.designer_widget.modules) * 400,
-                'y': 100,
+                'x': 0, 'y': 0,        # positioned in pass 2
                 'width': DEFAULT_MODULE_W,
                 'height': DEFAULT_MODULE_H,
                 'color': list(DEFAULT_MODULE_COLOR),
@@ -400,15 +439,41 @@ class MainWindow(QMainWindow):
             min_w, min_h = self.designer_widget._min_module_size(new_mod)
             new_mod['width'] = max(DEFAULT_MODULE_W, min_w)
             new_mod['height'] = max(DEFAULT_MODULE_H, min_h)
-
-            # Assign explicit grid positions to each port
             self.designer_widget._ensure_port_positions(new_mod)
+            new_modules.append(new_mod)
 
-            # Snapshot BEFORE adding the module so CTRL+Z can revert it
+        if not new_modules:
+            return
+
+        # --- Pass 2: centre the batch on the current viewport ---
+        gap = GRID_MODULE                  # spacing between adjacent modules
+        total_w = sum(m['width'] for m in new_modules) + gap * (len(new_modules) - 1)
+        max_h = max(m['height'] for m in new_modules)
+
+        vl, vt, vr, vb = self.designer_widget._visible_rect()
+        cx = (vl + vr) / 2                # viewport centre in world coords
+        cy = (vt + vb) / 2
+
+        # Snap the top-left origin of the row to the module grid
+        def _snap(val):
+            return round(val / GRID_MODULE) * GRID_MODULE
+
+        start_x = _snap(cx - total_w / 2)
+        base_y  = _snap(cy - max_h / 2)
+
+        cursor_x = start_x
+        for mod in new_modules:
+            mod['x'] = cursor_x
+            mod['y'] = base_y
+            cursor_x += mod['width'] + gap
+
+        # --- Pass 3: commit to the data model (one undo snapshot each) ---
+        for mod in new_modules:
             self.designer_widget._save_undo()
-            self.designer_widget.modules.append(new_mod)
+            self.designer_widget.modules.append(mod)
             self.designer_widget._notify_design_changed()
-            self._log("import_vhdl_ok", f"{instance_name} entity={parsed['entity']} ports={len(ports)}")
+            self._log("import_vhdl_ok",
+                       f"{mod['name']} entity={mod['entity']} ports={len(mod['ports'])}")
 
         self.designer_widget.update()
 

@@ -131,6 +131,10 @@ The application provides a graphical interface for adding modules, wiring signal
 	- When 'Import VHDL module' is chosen, a file browser opens at the last-used directory.
 	  The user can select one or multiple VHDL files to import. The last-used directory is
 	  persisted across imports.
+	- Imported modules are placed in the centre of the current viewport, laid
+	  out left-to-right with one grid-unit gap. When multiple modules are
+	  imported at once, the row is centred as a whole on the viewport centre.
+	  All positions are snapped to the module grid.
 	- When 'Optimal recenter' is chosen, the viewport and zoom are adjusted to fit all
 	  modules and wires in the visible area.
 
@@ -182,7 +186,10 @@ The application provides a graphical interface for adding modules, wiring signal
 	  so it scales naturally with zoom and is proportionate to the module blocks.
 	- User can zoom and unzoom the workspace for detailed or overview editing.
 	- Zoom and unzoom are centred on the mouse cursor position.
-	- Zoom-in is capped at 10.0; there is no limit on zoom-out.
+	- Zoom uses a multiplicative factor (×1.15 per scroll step) so it feels
+	  equally progressive at every magnification level.
+	- Zoom-in is capped at 10.0; zoom-out at 0.01.
+	- Default zoom is 0.125 (overview level).
 	- Object hit-testing:
 		- Uses the exact cursor position (not the snapped position).
 		- Hit-test radius is in screen pixels and scales with zoom.
@@ -190,6 +197,18 @@ The application provides a graphical interface for adding modules, wiring signal
 		- Wires: blue with a slightly thicker line and larger label font.
 		- VHDL blocks: thick blue boundary (6 world units).
 		- Ports: cyan marker and label.
+	- Paint-time overlay:
+		- A toggleable performance overlay is available in the Options dialog
+		  (Project → Options → Performance).
+		- When enabled, a small overlay in the bottom-right corner of the
+		  canvas displays:
+			• The current paint duration in milliseconds.
+			• The 1 % low (2nd-worst) paint duration over the last
+			  100 events.
+			• The 0.1 % low (worst) paint duration over the last
+			  100 events — an approximation, since a true 0.1 %
+			  would require more samples.
+		- The setting is persisted in settings.json and restored on startup.
 
 3.2 Action Remembering (Undo / Redo)
 	- Every user action that modifies the design is recorded in an action history.
@@ -229,8 +248,8 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> ESCAPE              — cancel any ongoing action.
 		-> CTRL+Z              — undo.
 		-> CTRL+E              — redo.
-		-> CTRL+S              — save project.		-> CTRL+C              — copy all selected objects.
-		-> CTRL+V              — paste copied objects.		-> DELETE              — delete all selected objects.
+		-> CTRL+S              — save project.			-> CTRL+C   — copy all selected objects.
+		-> CTRL+V              — paste copied objects.	-> DELETE   — delete all selected objects.
 
 7. Future Considerations
 	- Menu and feature placeholders for future growth.
