@@ -4,9 +4,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QSize, QTimer, QPoint, QEvent
+from data.keybindings import KeyBindings
 from ui.toast import ToastNotification
 import copy
 import os
+
+# Path for persisted keybindings (next to the executable / main.py)
+_KEYBINDINGS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "keybindings.json",
+)
 
 
 class MainWindow(QMainWindow):
@@ -27,7 +34,7 @@ class MainWindow(QMainWindow):
         self._init_menu()
         self._init_toolbar()
         self._init_central_widget()
-        self._init_shortcuts()
+        self._init_keybindings()
         self._toast = ToastNotification(self)
         self._log("MainWindow initialized")
 
@@ -168,6 +175,7 @@ class MainWindow(QMainWindow):
         project_menu.addAction(create_action)
 
         options_action = QAction("Options", self)
+        options_action.triggered.connect(self._open_options_dialog)
         project_menu.addAction(options_action)
 
         project_menu.addSeparator()
@@ -248,13 +256,24 @@ class MainWindow(QMainWindow):
         self._save_action.setIcon(self._save_icon_orange)
 
     # ------------------------------------------------------------------
-    # Keyboard shortcuts
+    # Keybindings
     # ------------------------------------------------------------------
 
-    def _init_shortcuts(self):
-        """Register global keyboard shortcuts."""
-        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
-        save_shortcut.activated.connect(self.save_project)
+    def _init_keybindings(self):
+        """Load keybindings from disk and wire them into the designer."""
+        self._keybindings = KeyBindings.load(_KEYBINDINGS_PATH)
+        self.designer_widget.keybindings = self._keybindings
+        self.designer_widget._save_callback = self.save_project
+
+    def _open_options_dialog(self):
+        """Open the keyboard-shortcuts editor."""
+        from ui.options_dialog import KeybindingsDialog
+
+        dlg = KeybindingsDialog(self._keybindings, parent=self)
+        if dlg.exec() and dlg.changed:
+            self._keybindings.save(_KEYBINDINGS_PATH)
+            self.designer_widget.keybindings = self._keybindings
+            self._log("keybindings_saved", _KEYBINDINGS_PATH)
 
     # ------------------------------------------------------------------
     # Save / Load
@@ -303,6 +322,11 @@ class MainWindow(QMainWindow):
             data = DataManager(logger=self._logger).load_project(filename)
             self.designer_widget.modules = data.get('modules', [])
             self.designer_widget.signals = data.get('signals', [])
+
+            # Ensure every port has an explicit grid position (backward compat)
+            for mod in self.designer_widget.modules:
+                self.designer_widget._ensure_port_positions(mod)
+
             self.designer_widget.update()
             # Remember the path so subsequent saves go to the same file
             self._project_filepath = filename
@@ -376,6 +400,9 @@ class MainWindow(QMainWindow):
             min_w, min_h = self.designer_widget._min_module_size(new_mod)
             new_mod['width'] = max(DEFAULT_MODULE_W, min_w)
             new_mod['height'] = max(DEFAULT_MODULE_H, min_h)
+
+            # Assign explicit grid positions to each port
+            self.designer_widget._ensure_port_positions(new_mod)
 
             # Snapshot BEFORE adding the module so CTRL+Z can revert it
             self.designer_widget._save_undo()

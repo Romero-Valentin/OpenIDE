@@ -74,8 +74,10 @@ class DesignerWidget(QWidget):
         self._label_drag_start = None    # raw cursor at drag start
         self._label_orig_offset = None   # original [ox, oy] before drag
 
-        # Port-drag state (repositioning a port to a different side)
+        # Port-drag state (repositioning a port to a different edge)
         self._port_drag_mod_idx = None
+        self._port_drag_orig = None        # {port_idx: (abs_x, abs_y)} at drag start
+        self._port_drag_primary_idx = None # port_idx of the clicked port
 
         # Viewport state
         self.zoom = 1.0
@@ -90,6 +92,8 @@ class DesignerWidget(QWidget):
         self._move_timer.timeout.connect(self._move_workspace)
         self._move_direction = None
         self._move_step = 20
+        self._active_pan_key = None   # Qt key constant currently held for panning
+        self._save_callback = None    # set by MainWindow for Ctrl+S delegation
 
         # World-coordinate font used for all in-canvas text.
         # Created once and reused by paintEvent and hit-testing methods.
@@ -100,6 +104,13 @@ class DesignerWidget(QWidget):
         # Optional callback invoked whenever the design state changes.
         # MainWindow sets this to keep the save-icon in sync.
         self.on_design_changed = None
+
+        # Clipboard for copy/paste (deep-copied module/wire dicts)
+        self._clipboard = None   # {'modules': [...], 'signals': [...]}
+
+        # Keybindings — set by MainWindow after construction.
+        # If None, no keyboard actions are processed.
+        self.keybindings = None
 
     # ------------------------------------------------------------------
     # Undo / Redo
@@ -290,31 +301,60 @@ class DesignerWidget(QWidget):
     def _compute_port_positions(self, mod):
         """Return a list of (px, py) for every port, in port-list order.
 
-        Ports are distributed along their assigned side at GRID_PORT positions
-        that fall strictly inside the module boundary.
+        Each port stores its own 'pos' — the offset along its assigned
+        edge, snapped to GRID_PORT.  The absolute position is derived
+        from the module origin plus the port's side and pos.
         """
         left, top, right, bottom = self._module_edges(mod)
-        cx, cy = (left + right) / 2, (top + bottom) / 2
+        positions = []
+        for port in mod.get('ports', []):
+            side = port.get('side', 'left')
+            pos = port.get('pos', GRID_PORT)
+            if side == 'left':
+                positions.append((left, top + pos))
+            elif side == 'right':
+                positions.append((right, top + pos))
+            elif side == 'top':
+                positions.append((left + pos, top))
+            else:  # bottom
+                positions.append((left + pos, bottom))
+        return positions
+
+    def _ensure_port_positions(self, mod):
+        """Assign a default 'pos' to every port that does not already have one.
+
+        Uses sequential GRID_PORT slots on each side, avoiding slots
+        already occupied by ports that do have an explicit position.
+        Called after import and after loading a project for backward
+        compatibility with files that pre-date explicit port positions.
+        """
+        left, top, right, bottom = self._module_edges(mod)
+        w = right - left
+        h = bottom - top
+
         sides = {'left': [], 'right': [], 'top': [], 'bottom': []}
         for i, p in enumerate(mod.get('ports', [])):
             sides[p.get('side', 'left')].append(i)
 
-        y_slots = self._valid_port_slots(top, bottom)
-        x_slots = self._valid_port_slots(left, right)
-
-        positions = [None] * len(mod.get('ports', []))
         for side, indices in sides.items():
-            if side in ('left', 'right'):
-                edge_x = left if side == 'left' else right
-                for order, port_idx in enumerate(indices):
-                    py = y_slots[order] if order < len(y_slots) else int(cy)
-                    positions[port_idx] = (edge_x, py)
-            else:
-                edge_y = top if side == 'top' else bottom
-                for order, port_idx in enumerate(indices):
-                    px = x_slots[order] if order < len(x_slots) else int(cx)
-                    positions[port_idx] = (px, edge_y)
-        return positions
+            slots = self._valid_port_slots(
+                0, h if side in ('left', 'right') else w)
+            occupied = set()
+            needs_pos = []
+            for port_idx in indices:
+                p = mod['ports'][port_idx]
+                if 'pos' in p:
+                    occupied.add(p['pos'])
+                else:
+                    needs_pos.append(port_idx)
+            available = [s for s in slots if s not in occupied]
+            for i, port_idx in enumerate(needs_pos):
+                if i < len(available):
+                    mod['ports'][port_idx]['pos'] = available[i]
+                elif slots:
+                    mod['ports'][port_idx]['pos'] = slots[-1]
+                else:
+                    mod['ports'][port_idx]['pos'] = GRID_PORT
 
     def _min_module_size(self, mod):
         """Return (min_w, min_h) ensuring every port keeps a valid slot,
@@ -333,6 +373,20 @@ class DesignerWidget(QWidget):
         need_h = max(len(sides['top']), len(sides['bottom']))
         count_min_h = (need_v + 1) * GRID_PORT
         count_min_w = (need_h + 1) * GRID_PORT
+
+        # Position constraint: largest stored pos must stay inside the boundary
+        max_v_pos = max(
+            (p.get('pos', GRID_PORT) for side_name in ('left', 'right')
+             for p in sides[side_name]),
+            default=0,
+        )
+        max_h_pos = max(
+            (p.get('pos', GRID_PORT) for side_name in ('top', 'bottom')
+             for p in sides[side_name]),
+            default=0,
+        )
+        pos_min_h = (max_v_pos + GRID_PORT) if max_v_pos > 0 else 0
+        pos_min_w = (max_h_pos + GRID_PORT) if max_h_pos > 0 else 0
 
         # Width = longest-left-port-name + longest-right-port-name
         #       + max(entity-name, instance-name) + 50  (extra_pad)
@@ -354,8 +408,8 @@ class DesignerWidget(QWidget):
 
         # Snap UP so the minimum is never less than the requirement
         g = GRID_MODULE_SIZE
-        raw_w = max(count_min_w, text_raw_w, g)
-        raw_h = max(count_min_h, name_min_h, g)
+        raw_w = max(count_min_w, pos_min_w, text_raw_w, g)
+        raw_h = max(count_min_h, pos_min_h, name_min_h, g)
         min_w = (int(raw_w) + g - 1) // g * g
         min_h = (int(raw_h) + g - 1) // g * g
         return min_w, min_h
@@ -489,6 +543,28 @@ class DesignerWidget(QWidget):
         if abs(dx) > abs(dy):
             return 'right' if dx > 0 else 'left'
         return 'bottom' if dy > 0 else 'top'
+
+    def _snap_to_boundary(self, mod, x, y):
+        """Return (side, pos) for the closest valid port slot on the module boundary.
+
+        'side' is 'left'|'right'|'top'|'bottom'.  'pos' is the offset
+        from the module's top edge (for left/right) or left edge (for
+        top/bottom), snapped to GRID_PORT.
+        """
+        left, top, right, bottom = self._module_edges(mod)
+        w = right - left
+        h = bottom - top
+        side = self._closest_module_side(mod, x, y)
+        if side in ('left', 'right'):
+            slots = self._valid_port_slots(0, h)
+            raw = y - top
+        else:
+            slots = self._valid_port_slots(0, w)
+            raw = x - left
+        if not slots:
+            return side, GRID_PORT
+        best = min(slots, key=lambda s: abs(s - raw))
+        return side, best
 
     # ------------------------------------------------------------------
     # Optimal recenter
@@ -797,43 +873,57 @@ class DesignerWidget(QWidget):
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event):
-        # Escape cancels any ongoing action
-        if event.key() == Qt.Key_Escape:
+        if self.keybindings is None:
+            return
+        action = self.keybindings.action_for_event(
+            event.key(), event.modifiers())
+
+        if action == 'cancel':
             self._cancel_action()
             return
-
-        # Ctrl+Z — undo
-        if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
+        if action == 'undo':
             self.undo()
             return
-
-        # Ctrl+E — redo
-        if event.key() == Qt.Key_E and (event.modifiers() & Qt.ControlModifier):
+        if action == 'redo':
             self.redo()
             return
-
-        # Delete key — remove all selected objects
-        if event.key() == Qt.Key_Delete:
+        if action == 'copy':
+            self._copy_selected()
+            return
+        if action == 'paste':
+            self._paste_clipboard()
+            return
+        if action == 'delete':
             self._delete_selected()
             return
-
-        # Arrow keys — smooth workspace movement
-        if event.isAutoRepeat():
+        if action == 'save':
+            # Delegate to MainWindow via callback
+            if self._save_callback:
+                self._save_callback()
             return
-        direction_map = {
-            Qt.Key_Left: 'left', Qt.Key_Right: 'right',
-            Qt.Key_Up: 'up', Qt.Key_Down: 'down',
+
+        # Pan keys — smooth, hold-to-move behaviour
+        pan_actions = {
+            'pan_left': 'left', 'pan_right': 'right',
+            'pan_up': 'up', 'pan_down': 'down',
         }
-        if event.key() in direction_map:
-            self._move_direction = direction_map[event.key()]
+        if action in pan_actions:
+            if event.isAutoRepeat():
+                return
+            self._move_direction = pan_actions[action]
+            self._active_pan_key = event.key()
             self._move_timer.start()
+            return
 
     def keyReleaseEvent(self, event):
         if event.isAutoRepeat():
             return
-        if event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+        # Stop panning when the key that started the pan is released
+        if (hasattr(self, '_active_pan_key')
+                and event.key() == self._active_pan_key):
             self._move_timer.stop()
             self._move_direction = None
+            self._active_pan_key = None
 
     def _cancel_action(self):
         self.drawing_wire = False
@@ -860,6 +950,114 @@ class DesignerWidget(QWidget):
         self._label_drag_start = None
         self._label_orig_offset = None
         self._port_drag_mod_idx = None
+        self._port_drag_orig = None
+        self._port_drag_primary_idx = None
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Copy / Paste
+    # ------------------------------------------------------------------
+
+    def _next_name_for(self, base: str) -> str:
+        """Return *base_N* with N being the lowest unused integer.
+
+        Strips any existing ``_N`` numeric suffix from *base* first so
+        that copying a copy doesn't stack suffixes (e.g. ``U_0_1_2``).
+        """
+        # Strip trailing _N if present
+        parts = base.rsplit('_', 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            stem = parts[0]
+        else:
+            stem = base
+
+        used: set[int] = set()
+        for mod in self.modules:
+            name = mod.get('name', '')
+            if name.startswith(stem + '_'):
+                suffix = name[len(stem) + 1:]
+                if suffix.isdigit():
+                    used.add(int(suffix))
+        n = 0
+        while n in used:
+            n += 1
+        return f'{stem}_{n}'
+
+    def _copy_selected(self):
+        """Copy every selected module and wire into the internal clipboard."""
+        if not self.selected_modules and not self.selected_wires:
+            return
+        self._clipboard = {
+            'modules': [copy.deepcopy(self.modules[i])
+                        for i in sorted(self.selected_modules)
+                        if 0 <= i < len(self.modules)],
+            'signals': [copy.deepcopy(self.signals[i])
+                        for i in sorted(self.selected_wires)
+                        if 0 <= i < len(self.signals)],
+        }
+
+    def _paste_clipboard(self):
+        """Paste the clipboard contents centred on the current viewport.
+
+        Duplicated modules receive unique names via ``_next_name_for``.
+        All pasted objects become the new selection.
+        """
+        if not self._clipboard:
+            return
+        mods = copy.deepcopy(self._clipboard['modules'])
+        sigs = copy.deepcopy(self._clipboard['signals'])
+        if not mods and not sigs:
+            return
+
+        # --- compute bounding box of copied objects ----------------------
+        all_xs: list[int] = []
+        all_ys: list[int] = []
+        for m in mods:
+            mx, my = m.get('x', 0), m.get('y', 0)
+            all_xs += [mx, mx + m.get('width', DEFAULT_MODULE_W)]
+            all_ys += [my, my + m.get('height', DEFAULT_MODULE_H)]
+        for s in sigs:
+            for pt in s.get('coordinates', []):
+                all_xs.append(pt[0] if isinstance(pt, (list, tuple)) else pt)
+                all_ys.append(pt[1] if isinstance(pt, (list, tuple)) else pt)
+        if not all_xs or not all_ys:
+            return
+
+        bbox_cx = (min(all_xs) + max(all_xs)) / 2
+        bbox_cy = (min(all_ys) + max(all_ys)) / 2
+
+        # --- viewport centre (snapped to module grid) --------------------
+        left, top, right, bottom = self._visible_rect()
+        view_cx = self._snap_module((left + right) / 2)
+        view_cy = self._snap_module((top + bottom) / 2)
+
+        dx = int(view_cx - bbox_cx)
+        dy = int(view_cy - bbox_cy)
+
+        # --- apply offset & assign unique names --------------------------
+        self._save_undo()
+
+        new_mod_start = len(self.modules)
+        for m in mods:
+            m['x'] = m.get('x', 0) + dx
+            m['y'] = m.get('y', 0) + dy
+            m['name'] = self._next_name_for(m.get('name', 'U_0'))
+            self.modules.append(m)
+
+        new_sig_start = len(self.signals)
+        for s in sigs:
+            s['coordinates'] = [
+                (pt[0] + dx, pt[1] + dy)
+                for pt in s.get('coordinates', [])
+            ]
+            self.signals.append(s)
+
+        # --- select only the pasted objects ------------------------------
+        self.selected_modules = set(range(new_mod_start, len(self.modules)))
+        self.selected_wires = set(range(new_sig_start, len(self.signals)))
+        self.selected_ports.clear()
+
+        self._notify_design_changed()
         self.update()
 
     def _delete_selected(self):
@@ -948,6 +1146,13 @@ class DesignerWidget(QWidget):
                 self._save_undo()
                 self._drag_type = 'move_port'
                 self._port_drag_mod_idx = pm_mod
+                # Record original absolute positions for delta computation
+                positions = self._compute_port_positions(self.modules[pm_mod])
+                self._port_drag_orig = {}
+                for midx, pidx in self.selected_ports:
+                    if midx == pm_mod and pidx < len(positions):
+                        self._port_drag_orig[pidx] = positions[pidx]
+                self._port_drag_primary_idx = pm_port
             self.update()
             return
 
@@ -1139,6 +1344,8 @@ class DesignerWidget(QWidget):
         self._label_drag_start = None
         self._label_orig_offset = None
         self._port_drag_mod_idx = None
+        self._port_drag_orig = None
+        self._port_drag_primary_idx = None
         self.update()
 
     def _finalize_rubber_band(self):
@@ -1314,35 +1521,62 @@ class DesignerWidget(QWidget):
         ]
 
     def _apply_port_reposition(self, raw_pos):
-        """Move all selected ports on the dragged module to the closest edge.
+        """Move selected ports to the boundary position under the cursor.
 
-        The move is only applied if the target side has enough free
-        GRID_PORT slots for the incoming ports.  Otherwise the ports
-        stay on their current side to prevent overlapping.
+        Each port independently snaps to the closest valid GRID_PORT
+        slot on the module boundary.  When multiple ports are selected,
+        their relative spacing is preserved by applying the same delta
+        computed from the primary (clicked) port's movement.
+
+        The move is rejected entirely if any proposed position collides
+        with a stationary port or with another proposed position.
         """
+        if not self._port_drag_orig:
+            return
         mod = self.modules[self._port_drag_mod_idx]
-        new_side = self._closest_module_side(mod, raw_pos[0], raw_pos[1])
+        moving = set(self._port_drag_orig.keys())
+        primary = self._port_drag_primary_idx
 
-        # Count how many ports already sit on the target side (not
-        # counting the ones being moved — they might come from there).
-        moving = {pidx for midx, pidx in self.selected_ports
-                  if midx == self._port_drag_mod_idx}
-        existing = sum(1 for i, p in enumerate(mod['ports'])
-                       if p.get('side', 'left') == new_side and i not in moving)
-        incoming = len(moving)
-
-        # Available slots on the target side
+        # Where would the primary port go?
+        target_side, target_pos = self._snap_to_boundary(
+            mod, raw_pos[0], raw_pos[1])
         left, top, right, bottom = self._module_edges(mod)
-        if new_side in ('left', 'right'):
-            capacity = len(self._valid_port_slots(top, bottom))
+
+        # Compute absolute target position of the primary port
+        if target_side in ('left', 'right'):
+            tgt_x = left if target_side == 'left' else right
+            tgt_y = top + target_pos
         else:
-            capacity = len(self._valid_port_slots(left, right))
+            tgt_x = left + target_pos
+            tgt_y = top if target_side == 'top' else bottom
 
-        if existing + incoming > capacity:
-            return  # not enough room — abort
+        delta_x = tgt_x - self._port_drag_orig[primary][0]
+        delta_y = tgt_y - self._port_drag_orig[primary][1]
 
+        # Compute proposed (side, pos) for every moving port
+        proposals = {}
         for pidx in moving:
+            ox, oy = self._port_drag_orig[pidx]
+            new_side, new_pos = self._snap_to_boundary(
+                mod, ox + delta_x, oy + delta_y)
+            proposals[pidx] = (new_side, new_pos)
+
+        # Collision check: no proposed slot may overlap a stationary port
+        # or another proposed slot.
+        occupied = set()
+        for i, p in enumerate(mod['ports']):
+            if i not in moving:
+                occupied.add((p.get('side', 'left'), p.get('pos', GRID_PORT)))
+
+        for pidx, (new_side, new_pos) in proposals.items():
+            if (new_side, new_pos) in occupied:
+                return  # collision — abort entire move
+            occupied.add((new_side, new_pos))
+
+        # All clear — apply
+        for pidx, (new_side, new_pos) in proposals.items():
             mod['ports'][pidx]['side'] = new_side
+            mod['ports'][pidx]['pos'] = new_pos
 
     @staticmethod
     def _make_90_degree_mid(last, pos):

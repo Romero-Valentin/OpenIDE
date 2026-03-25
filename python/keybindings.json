@@ -1,0 +1,74 @@
+{
+  "cancel": [
+    {
+      "key": "Escape"
+    }
+  ],
+  "delete": [
+    {
+      "key": "Delete"
+    }
+  ],
+  "pan_down": [
+    {
+      "key": "Down"
+    },
+    {
+      "key": "S"
+    }
+  ],
+  "pan_left": [
+    {
+      "key": "Left"
+    },
+    {
+      "key": "A"
+    },
+    {
+      "key": "Q"
+    }
+  ],
+  "pan_right": [
+    {
+      "key": "Right"
+    },
+    {
+      "key": "D"
+    }
+  ],
+  "pan_up": [
+    {
+      "key": "Up"
+    },
+    {
+      "key": "W"
+    },
+    {
+      "key": "Z"
+    }
+  ],
+  "redo": [
+    {
+      "key": "E",
+      "modifiers": [
+        "Ctrl"
+      ]
+    }
+  ],
+  "save": [
+    {
+      "key": "S",
+      "modifiers": [
+        "Ctrl"
+      ]
+    }
+  ],
+  "undo": [
+    {
+      "key": "Z",
+      "modifiers": [
+        "Ctrl"
+      ]
+    }
+  ]
+}

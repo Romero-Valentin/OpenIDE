@@ -46,10 +46,21 @@ The application provides a graphical interface for adding modules, wiring signal
 2.5 VHDL Block — Ports
 	- Each port has a direction: "in", "out", "inout", or "buffer".
 	- Default placement: inputs on the left side, all other directions on the right.
-	- Ports can be repositioned by clicking the port marker and dragging it toward
-	  a different edge of the block. The port snaps to the closest edge on release.
-	  The move is rejected if the target edge has no free 100-grid slot.
-	  Multiple ports can be selected (CTRL+click or rubber-band) and repositioned together.
+	- Each port stores an explicit position (offset along its assigned edge,
+	  snapped to the 100-unit port grid).  On import, ports are assigned
+	  sequential default positions; these positions are saved and restored
+	  with the project file.
+	- The user can freely reposition a port by clicking its marker and
+	  dragging it to any valid 100-grid slot on any edge of the block.
+	  The port follows the cursor in real-time, snapping to the nearest
+	  boundary slot.
+	- Moving a port does not affect the positions of other ports.
+	- Multiple ports can be selected (CTRL+click or rubber-band) and
+	  repositioned together.  Relative spacing between selected ports is
+	  preserved during the drag; collision with stationary ports or with
+	  each other causes the entire move to be rejected.
+	- A port move is rejected if the target slot is already occupied by
+	  a non-selected port.
 	- Port positions always snap to the 100-unit visible grid along the block edge.
 	- "in" and "out" ports are drawn as arrowhead-only markers (24 world units, no tail line).
 	  The arrowhead points toward the block for "in", and away for "out".
@@ -123,6 +134,46 @@ The application provides a graphical interface for adding modules, wiring signal
 	- When 'Optimal recenter' is chosen, the viewport and zoom are adjusted to fit all
 	  modules and wires in the visible area.
 
+2.10 Keyboard Shortcuts
+	- All keyboard shortcuts are fully configurable by the user.
+	- Shortcuts are persisted in a JSON file (keybindings.json) that is loaded
+	  on startup and saved whenever the user modifies bindings.
+	- An Options dialog (Project → Options) displays every action and its
+	  current key combination(s).  The user can click a shortcut cell and
+	  press a new key-combo to reassign it.  Conflicts are detected and the
+	  user is prompted before overwriting.
+	- A "Reset Defaults" button restores all bindings to factory settings.
+	- Default bindings:
+		-> Pan left:        Left arrow, A, Q
+		-> Pan right:       Right arrow, D
+		-> Pan up:          Up arrow, W, Z
+		-> Pan down:        Down arrow, S
+		-> Undo:            Ctrl+Z
+		-> Redo:            Ctrl+E
+		-> Save project:    Ctrl+S
+		-> Copy selected:   Ctrl+C
+		-> Paste:           Ctrl+V
+		-> Delete selected: Delete
+		-> Cancel action:   Escape
+	- New default actions added in future updates are automatically merged
+	  into existing user configurations without overwriting customisations.
+
+2.11 Copy & Paste
+	- The user can copy all currently selected modules and wires with Ctrl+C
+	  (ports, port labels, and module-entity labels are not independently
+	  copyable; they travel with their parent module).
+	- Ctrl+V pastes the copied objects.  The pasted group is centred on the
+	  current viewport centre (snapped to the module grid).
+	- Pasted modules retain all properties of the originals (entity, library,
+	  ports, colour, size, label offsets) except for their position and name.
+	- Relative positions between all pasted objects (modules and wires) are
+	  preserved.
+	- Each pasted module is renamed to <stem>_N, where <stem> is the original
+	  name stripped of any trailing numeric suffix, and N is the lowest
+	  integer not already used by a module with the same stem.
+	- After a paste, only the newly pasted objects are selected.
+	- The paste operation is recorded as a single undoable action.
+
 3. Technical Requirements
 
 3.1 Drawing & Performance
@@ -172,12 +223,14 @@ The application provides a graphical interface for adding modules, wiring signal
 6. User Experience
 	- Intuitive interface for module placement, wiring, and project management.
 	- Visual clarity and responsiveness prioritised.
-	- Arrow keys — move the workspace view.
-	- ESCAPE     — cancels any ongoing action (drawing, moving, resizing, etc.).
-	- CTRL+Z     — undo.
-	- CTRL+E     — redo. 
-	- CTRL+S     — save project.
-	- SUPPR      — delete all selected objects.
+	- All keyboard shortcuts are configurable via Project → Options (see §2.10).
+	- Default shortcuts:
+		-> Arrow / WASD / ZQSD — pan the workspace view.
+		-> ESCAPE              — cancel any ongoing action.
+		-> CTRL+Z              — undo.
+		-> CTRL+E              — redo.
+		-> CTRL+S              — save project.		-> CTRL+C              — copy all selected objects.
+		-> CTRL+V              — paste copied objects.		-> DELETE              — delete all selected objects.
 
 7. Future Considerations
 	- Menu and feature placeholders for future growth.
