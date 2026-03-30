@@ -283,10 +283,20 @@ class MainWindow(QMainWindow):
             except (json.JSONDecodeError, OSError):
                 pass
         self.designer_widget.show_fps = self._settings.get("show_fps", False)
+        self.designer_widget.show_grid = self._settings.get("show_grid", True)
+        # Pan tick rate (VSync is the default)
+        pan_vsync = self._settings.get("pan_vsync", True)
+        pan_hz = self._settings.get("pan_hz", 120)
+        self.designer_widget.set_pan_vsync(pan_vsync)
+        if not pan_vsync:
+            self.designer_widget.set_pan_hz(pan_hz)
 
     def _save_settings(self):
         """Persist current application settings to disk."""
         self._settings["show_fps"] = self.designer_widget.show_fps
+        self._settings["show_grid"] = self.designer_widget.show_grid
+        self._settings["pan_hz"] = self.designer_widget._pan_hz
+        self._settings["pan_vsync"] = self.designer_widget._pan_vsync
         os.makedirs(os.path.dirname(_SETTINGS_PATH) or ".", exist_ok=True)
         with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(self._settings, f, indent=2, sort_keys=True)
@@ -298,11 +308,22 @@ class MainWindow(QMainWindow):
         dlg = OptionsDialog(
             self._keybindings,
             show_fps=self.designer_widget.show_fps,
+            show_grid=self.designer_widget.show_grid,
+            pan_hz=self.designer_widget._pan_hz,
+            pan_vsync=self.designer_widget._pan_vsync,
             parent=self,
         )
         if dlg.exec():
+            # Apply display settings
+            self.designer_widget.show_grid = dlg.show_grid
             # Apply FPS overlay toggle
             self.designer_widget.show_fps = dlg.show_fps
+            # Apply pan tick rate
+            if dlg.pan_vsync:
+                self.designer_widget.set_pan_vsync(True)
+            else:
+                self.designer_widget.set_pan_vsync(False)
+                self.designer_widget.set_pan_hz(dlg.pan_hz)
             self.designer_widget.update()
             self._save_settings()
             # Save keybindings if changed

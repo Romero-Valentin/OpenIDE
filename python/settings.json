@@ -1,3 +1,6 @@
 {
-  "show_fps": false
+  "pan_hz": 120,
+  "pan_vsync": true,
+  "show_fps": true,
+  "show_grid": false
 }

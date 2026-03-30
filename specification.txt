@@ -12,8 +12,13 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Module coordinates are integer only.
 
 2.2 Grids
-	- Visible grid: every position that is a multiple of 100 displays a small, furtive dot.
-	  The grid is dynamically generated based on the current viewport (only visible grid points are drawn).
+	- Visible grid: every position that is a multiple of 100 displays a small dot.
+	  The grid is dynamically generated based on the current viewport (only visible
+	  grid points are drawn).  Dots are drawn at a fixed screen-pixel size (3 px
+	  radius) so they remain visible at every zoom level.
+	  Grid visibility can be toggled in the Options dialog
+	  (Project → Options → Display).  Default is ON.  The setting is persisted
+	  in settings.json.
 	- Module position grid (invisible): module positions snap to a 100-unit grid.
 	- Module size grid (invisible): module width and height snap to a 100-unit grid.
 	- Port grid (invisible): ports always snap to the 100-unit grid so wires can connect.
@@ -190,6 +195,21 @@ The application provides a graphical interface for adding modules, wiring signal
 	  equally progressive at every magnification level.
 	- Zoom-in is capped at 10.0; zoom-out at 0.01.
 	- Default zoom is 0.125 (overview level).
+	- Keyboard panning:
+		- Uses delta-time (elapsed time between ticks) so the movement is
+		  smooth and frame-rate independent.
+		- The pan speed is 2400 world units per second, multiplied by the
+		  current zoom so the visual travel speed on screen stays consistent
+		  at every magnification level.
+		- The pan-timer tick rate defaults to VSync (display-rate matching)
+		  and is configurable in the Options dialog
+		  (Project → Options → Performance).
+		  Available presets: VSync (default), 240 Hz, 120 Hz, 60 Hz.
+		- VSync mode: the tick rate is set to match the primary screen's
+		  refresh rate (queried from the OS). This is display-rate matching,
+		  not GPU-level vertical sync, since QWidget painting is composited
+		  by the window manager.
+		- The tick-rate setting is persisted in settings.json.
 	- Object hit-testing:
 		- Uses the exact cursor position (not the snapped position).
 		- Hit-test radius is in screen pixels and scales with zoom.
@@ -197,17 +217,22 @@ The application provides a graphical interface for adding modules, wiring signal
 		- Wires: blue with a slightly thicker line and larger label font.
 		- VHDL blocks: thick blue boundary (6 world units).
 		- Ports: cyan marker and label.
-	- Paint-time overlay:
+	- Performance overlay:
 		- A toggleable performance overlay is available in the Options dialog
 		  (Project → Options → Performance).
-		- When enabled, a small overlay in the bottom-right corner of the
+		- When enabled, a two-line overlay in the bottom-right corner of the
 		  canvas displays:
-			• The current paint duration in milliseconds.
-			• The 1 % low (2nd-worst) paint duration over the last
-			  100 events.
-			• The 0.1 % low (worst) paint duration over the last
-			  100 events — an approximation, since a true 0.1 %
-			  would require more samples.
+		  Line 1 — Paint time (paintEvent duration):
+			• Current paint duration in milliseconds.
+			• 1 % low (2nd-worst over the last 100 paints).
+			• 0.1 % low (worst over the last 100 paints).
+		  Line 2 — Event-handler time (input-event processing):
+			• Duration of the last mouse/keyboard event handler in ms.
+			• 1 % low (2nd-worst over the last 100 events).
+			• 0.1 % low (worst over the last 100 events).
+		- Measured event handlers: mousePressEvent, mouseMoveEvent,
+		  mouseReleaseEvent, wheelEvent, keyPressEvent.
+		- Both metrics use a rolling window of 100 samples.
 		- The setting is persisted in settings.json and restored on startup.
 
 3.2 Action Remembering (Undo / Redo)

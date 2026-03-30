@@ -2,7 +2,7 @@
 
 The dialog contains two sections:
 
-1. **Performance** — toggleable paint-time overlay.
+1. **Performance** — toggleable performance overlay.
 2. **Keyboard Shortcuts** — table of all registered actions with
    click-to-capture reassignment and conflict detection.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QLabel, QMessageBox, QAbstractItemView,
-    QCheckBox, QGroupBox,
+    QCheckBox, QGroupBox, QComboBox,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
@@ -20,6 +20,19 @@ from PySide6.QtGui import QKeyEvent
 from data.keybindings import (
     KeyBindings, KeyCombo, qt_key_to_name, modifiers_to_strings,
 )
+
+
+# -----------------------------------------------------------------------
+# Pan tick-rate presets
+# -----------------------------------------------------------------------
+
+# Each entry is (label, hz_value).  hz_value == 0 means VSync mode.
+_PAN_HZ_PRESETS: list[tuple[str, int]] = [
+    ("VSync — match display (default)", 0),
+    ("240 Hz", 240),
+    ("120 Hz", 120),
+    ("60 Hz", 60),
+]
 
 
 # -----------------------------------------------------------------------
@@ -114,7 +127,11 @@ class OptionsDialog(QDialog):
     """Modal dialog for application settings and keyboard shortcuts."""
 
     def __init__(self, keybindings: KeyBindings, *,
-                 show_fps: bool = False, parent=None):
+                 show_fps: bool = False,
+                 show_grid: bool = True,
+                 pan_hz: int = 120,
+                 pan_vsync: bool = False,
+                 parent=None):
         super().__init__(parent)
         self.setWindowTitle("Options")
         self.setMinimumSize(540, 480)
@@ -123,13 +140,38 @@ class OptionsDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # --- Display section -----------------------------------------------
+        display_group = QGroupBox("Display")
+        display_layout = QVBoxLayout(display_group)
+        self._grid_checkbox = QCheckBox("Show grid dots")
+        self._grid_checkbox.setChecked(show_grid)
+        display_layout.addWidget(self._grid_checkbox)
+        layout.addWidget(display_group)
+
         # --- Performance section -------------------------------------------
         perf_group = QGroupBox("Performance")
         perf_layout = QVBoxLayout(perf_group)
         self._fps_checkbox = QCheckBox(
-            "Show paint-time overlay (bottom-right corner)")
+            "Show performance overlay (bottom-right corner)")
         self._fps_checkbox.setChecked(show_fps)
         perf_layout.addWidget(self._fps_checkbox)
+
+        # Pan tick-rate selector
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(QLabel("Pan tick rate:"))
+        self._pan_hz_combo = QComboBox()
+        selected_index = 2  # default to "120 Hz"
+        for idx, (label, hz) in enumerate(_PAN_HZ_PRESETS):
+            self._pan_hz_combo.addItem(label, userData=hz)
+            if pan_vsync and hz == 0:
+                selected_index = idx
+            elif not pan_vsync and hz == pan_hz:
+                selected_index = idx
+        self._pan_hz_combo.setCurrentIndex(selected_index)
+        rate_row.addWidget(self._pan_hz_combo)
+        rate_row.addStretch()
+        perf_layout.addLayout(rate_row)
+
         layout.addWidget(perf_group)
 
         # --- Keyboard Shortcuts section ------------------------------------
@@ -266,9 +308,24 @@ class OptionsDialog(QDialog):
         return self._changed
 
     @property
+    def show_grid(self) -> bool:
+        """Return the current state of the grid-visibility checkbox."""
+        return self._grid_checkbox.isChecked()
+
+    @property
     def show_fps(self) -> bool:
         """Return the current state of the FPS-overlay checkbox."""
         return self._fps_checkbox.isChecked()
+
+    @property
+    def pan_hz(self) -> int:
+        """Return the selected pan tick rate in Hz (0 = VSync)."""
+        return self._pan_hz_combo.currentData()
+
+    @property
+    def pan_vsync(self) -> bool:
+        """Return True if VSync (display-rate matching) is selected."""
+        return self._pan_hz_combo.currentData() == 0
 
 
 # Backward-compatible alias

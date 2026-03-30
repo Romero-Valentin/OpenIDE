@@ -30,6 +30,7 @@ EDGE_HIT_RADIUS_PX = 8     # module-edge resize handle
 LABEL_HIT_PADDING = 4       # extra padding around text bounding boxes
 
 DEFAULT_ZOOM = 0.25         # initial zoom level (farther out than 1.0)
+DEFAULT_PAN_HZ = 120       # default pan-timer tick rate (Hz)
 
 
 class DesignerWidget(QWidget):
@@ -89,15 +90,18 @@ class DesignerWidget(QWidget):
         self.offset_x = 0
         self.offset_y = 0
 
-        # Smooth arrow-key movement
+        # Smooth arrow-key panning (delta-time based)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self._move_timer = QTimer()
-        self._move_timer.setInterval(16)  # ~60 FPS
         self._move_timer.timeout.connect(self._move_workspace)
         self._move_direction = None
-        self._move_step = 20
-        self._active_pan_key = None   # Qt key constant currently held for panning
+        self._pan_speed = 2400          # world units per second
+        self._move_last_t = 0.0         # perf_counter at previous tick
+        self._active_pan_key = None     # Qt key constant currently held
+        self._pan_hz = DEFAULT_PAN_HZ   # stored Hz for non-VSync mode
+        self._pan_vsync = False         # True = match display refresh rate
+        self.set_pan_vsync(True)        # VSync is the default tick mode
         self._save_callback = None    # set by MainWindow for Ctrl+S delegation
 
         # World-coordinate font used for all in-canvas text.
@@ -113,12 +117,18 @@ class DesignerWidget(QWidget):
         # Clipboard for copy/paste (deep-copied module/wire dicts)
         self._clipboard = None   # {'modules': [...], 'signals': [...]}
 
-        # Paint-time overlay — toggled via Options dialog
+        # Performance overlay — toggled via Options dialog
         self.show_fps = False
+        # Grid visibility — toggled via Options dialog
+        self.show_grid = True
         self._paint_ms = 0.0             # last paintEvent duration in ms
         self._paint_history: collections.deque[float] = collections.deque(maxlen=100)
         self._paint_p1 = 0.0            # 1 % low  (2nd-worst of last 100)
         self._paint_p01 = 0.0           # 0.1 % low (worst of last 100)
+        self._event_ms = 0.0            # last event-handler duration in ms
+        self._event_history: collections.deque[float] = collections.deque(maxlen=100)
+        self._event_p1 = 0.0
+        self._event_p01 = 0.0
 
         # Keybindings — set by MainWindow after construction.
         # If None, no keyboard actions are processed.
@@ -633,29 +643,37 @@ class DesignerWidget(QWidget):
 
         painter.restore()
 
-        # --- Paint-time overlay (screen-space, bottom-right) ---
+        # --- Performance overlay (screen-space, bottom-right) ---
         if self.show_fps:
             self._paint_ms = (time.perf_counter() - t0) * 1000
             self._paint_history.append(self._paint_ms)
             top2 = heapq.nlargest(2, self._paint_history)
             self._paint_p01 = top2[0]
             self._paint_p1 = top2[1] if len(top2) > 1 else top2[0]
-            text = (f"{self._paint_ms:.1f} ms  |  "
-                    f"1%: {self._paint_p1:.1f} ms  |  "
-                    f"0.1%: {self._paint_p01:.1f} ms")
+
+            line1 = (f"Paint: {self._paint_ms:.1f} ms  |  "
+                     f"1%: {self._paint_p1:.1f} ms  |  "
+                     f"0.1%: {self._paint_p01:.1f} ms")
+            line2 = (f"Event: {self._event_ms:.1f} ms  |  "
+                     f"1%: {self._event_p1:.1f} ms  |  "
+                     f"0.1%: {self._event_p01:.1f} ms")
+
             font = painter.font()
             font.setPixelSize(13)
             painter.setFont(font)
             fm = QFontMetrics(font)
-            tw = fm.horizontalAdvance(text) + 12
-            th = fm.height() + 6
+            tw = max(fm.horizontalAdvance(line1),
+                     fm.horizontalAdvance(line2)) + 12
+            line_h = fm.height() + 2
+            th = line_h * 2 + 8
             rx = self.width() - tw - 6
             ry = self.height() - th - 6
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(0, 0, 0, 160))
             painter.drawRoundedRect(rx, ry, tw, th, 4, 4)
             painter.setPen(QColor(0, 255, 0))
-            painter.drawText(rx + 6, ry + fm.ascent() + 3, text)
+            painter.drawText(rx + 6, ry + fm.ascent() + 3, line1)
+            painter.drawText(rx + 6, ry + fm.ascent() + 3 + line_h, line2)
 
     def _visible_rect(self):
         """Return the workspace-coordinate bounding box currently visible."""
@@ -668,22 +686,29 @@ class DesignerWidget(QWidget):
         return left, top, right, bottom
 
     def _draw_grid(self, painter):
-        """Draw grid dots only within the visible viewport."""
+        """Draw grid dots at a fixed screen-pixel size within the visible viewport.
+
+        Each dot is drawn as a filled circle whose radius is constant in
+        screen pixels (3 px), making it visible at any zoom level.
+        """
+        if not self.show_grid:
+            return
         left, top, right, bottom = self._visible_rect()
-        # Align to grid boundaries (multiples of 100)
-        grid = 100
+        grid = GRID_VISIBLE
         x_start = int(left // grid) * grid
         y_start = int(top // grid) * grid
         x_end = int(right // grid + 1) * grid
         y_end = int(bottom // grid + 1) * grid
 
-        radius = 1
-        painter.setPen(QPen(QColor(180, 180, 180), 1))
+        # Radius in world coordinates so the dot appears as ~3 screen pixels
+        r = 3.0 / self.zoom
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(140, 140, 140))
         gx = x_start
         while gx <= x_end:
             gy = y_start
             while gy <= y_end:
-                painter.drawEllipse(gx - radius, gy - radius, radius * 2, radius * 2)
+                painter.drawEllipse(QRectF(gx - r, gy - r, r * 2, r * 2))
                 gy += grid
             gx += grid
 
@@ -872,6 +897,7 @@ class DesignerWidget(QWidget):
     # ------------------------------------------------------------------
 
     def wheelEvent(self, event):
+        t0 = time.perf_counter()
         mouse_x = event.position().x()
         mouse_y = event.position().y()
         # Workspace point under cursor before zoom
@@ -887,18 +913,61 @@ class DesignerWidget(QWidget):
         # Adjust offset so the same workspace point stays under the cursor
         self.offset_x = mouse_x - wx * self.zoom
         self.offset_y = mouse_y - wy * self.zoom
+        if self.show_fps:
+            self._record_event_time((time.perf_counter() - t0) * 1000)
         self.update()
 
     def _move_workspace(self):
+        """Advance the pan by the elapsed time since the last tick.
+
+        The step is computed in screen pixels so that the *world-coordinate*
+        travel speed stays constant regardless of zoom level.
+        """
+        now = time.perf_counter()
+        dt = now - self._move_last_t
+        self._move_last_t = now
+        # Convert world speed → screen pixels for this frame
+        step = self._pan_speed * self.zoom * dt
         if self._move_direction == 'left':
-            self.offset_x += self._move_step
+            self.offset_x += step
         elif self._move_direction == 'right':
-            self.offset_x -= self._move_step
+            self.offset_x -= step
         elif self._move_direction == 'up':
-            self.offset_y += self._move_step
+            self.offset_y += step
         elif self._move_direction == 'down':
-            self.offset_y -= self._move_step
+            self.offset_y -= step
         self.update()
+
+    # ------------------------------------------------------------------
+    # Pan tick-rate configuration
+    # ------------------------------------------------------------------
+
+    def set_pan_hz(self, hz: int) -> None:
+        """Set the pan-timer tick rate in Hz.
+
+        The interval is clamped to at least 1 ms.  If VSync mode is active
+        this value is ignored until VSync is disabled.
+        """
+        self._pan_hz = max(1, hz)
+        if not self._pan_vsync:
+            self._move_timer.setInterval(max(1, round(1000 / self._pan_hz)))
+
+    def set_pan_vsync(self, enabled: bool) -> None:
+        """Enable or disable VSync (display-rate matching) for panning.
+
+        When enabled, the pan-timer interval is set to match the primary
+        screen's refresh rate.  When disabled, the stored _pan_hz is used.
+        Note: this is *display-rate matching*, not true GPU VSync — QWidget
+        painting is composited by the window manager which already prevents
+        tearing.
+        """
+        self._pan_vsync = enabled
+        if enabled:
+            screen = self.screen()
+            rate = screen.refreshRate() if screen else 60.0
+            self._move_timer.setInterval(max(1, round(1000 / rate)))
+        else:
+            self._move_timer.setInterval(max(1, round(1000 / self._pan_hz)))
 
     def _transform_mouse(self, event):
         x = (event.position().x() - self.offset_x) / self.zoom
@@ -910,6 +979,14 @@ class DesignerWidget(QWidget):
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event):
+        t0 = time.perf_counter()
+        try:
+            self._keyPressEventInner(event)
+        finally:
+            if self.show_fps:
+                self._record_event_time((time.perf_counter() - t0) * 1000)
+
+    def _keyPressEventInner(self, event):
         if self.keybindings is None:
             return
         action = self.keybindings.action_for_event(
@@ -949,6 +1026,7 @@ class DesignerWidget(QWidget):
                 return
             self._move_direction = pan_actions[action]
             self._active_pan_key = event.key()
+            self._move_last_t = time.perf_counter()
             self._move_timer.start()
             return
 
@@ -1123,10 +1201,23 @@ class DesignerWidget(QWidget):
         self.update()
 
     # ------------------------------------------------------------------
+    # Event-handler timing helper
+    # ------------------------------------------------------------------
+
+    def _record_event_time(self, elapsed_ms: float) -> None:
+        """Record an event-handler duration for the performance overlay."""
+        self._event_ms = elapsed_ms
+        self._event_history.append(elapsed_ms)
+        top2 = heapq.nlargest(2, self._event_history)
+        self._event_p01 = top2[0]
+        self._event_p1 = top2[1] if len(top2) > 1 else top2[0]
+
+    # ------------------------------------------------------------------
     # Mouse — drawing / selecting
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
+        t0 = time.perf_counter()
         if event.button() != Qt.LeftButton:
             return
         raw_pos = self._transform_mouse(event)
@@ -1137,6 +1228,8 @@ class DesignerWidget(QWidget):
             self._handle_draw_click(pos)
         elif self.mode == "select":
             self._handle_select_click(pos, raw_pos, ctrl)
+        if self.show_fps:
+            self._record_event_time((time.perf_counter() - t0) * 1000)
 
     def _handle_draw_click(self, pos):
         if not self.drawing_wire:
@@ -1352,6 +1445,7 @@ class DesignerWidget(QWidget):
         }
 
     def mouseReleaseEvent(self, event):
+        t0 = time.perf_counter()
         if self.mode != "select" or self._drag_type is None:
             return
 
@@ -1383,6 +1477,8 @@ class DesignerWidget(QWidget):
         self._port_drag_mod_idx = None
         self._port_drag_orig = None
         self._port_drag_primary_idx = None
+        if self.show_fps:
+            self._record_event_time((time.perf_counter() - t0) * 1000)
         self.update()
 
     def _finalize_rubber_band(self):
@@ -1447,6 +1543,7 @@ class DesignerWidget(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event):
+        t0 = time.perf_counter()
         raw_pos = self._transform_mouse(event)
         pos = self._snap_to_grid(raw_pos)
 
@@ -1496,6 +1593,8 @@ class DesignerWidget(QWidget):
                 self._apply_port_reposition(raw_pos)
 
             self.update()
+        if self.show_fps:
+            self._record_event_time((time.perf_counter() - t0) * 1000)
 
     # ------------------------------------------------------------------
     # Resize helpers
