@@ -4,9 +4,49 @@
       "key": "Escape"
     }
   ],
+  "copy": [
+    {
+      "key": "C",
+      "modifiers": [
+        "Ctrl"
+      ]
+    }
+  ],
   "delete": [
     {
       "key": "Delete"
+    }
+  ],
+  "jump_down": [
+    {
+      "key": "Down",
+      "modifiers": [
+        "Shift"
+      ]
+    }
+  ],
+  "jump_left": [
+    {
+      "key": "Left",
+      "modifiers": [
+        "Shift"
+      ]
+    }
+  ],
+  "jump_right": [
+    {
+      "key": "Right",
+      "modifiers": [
+        "Shift"
+      ]
+    }
+  ],
+  "jump_up": [
+    {
+      "key": "Up",
+      "modifiers": [
+        "Shift"
+      ]
     }
   ],
   "pan_down": [
@@ -45,6 +85,14 @@
     },
     {
       "key": "Z"
+    }
+  ],
+  "paste": [
+    {
+      "key": "V",
+      "modifiers": [
+        "Ctrl"
+      ]
     }
   ],
   "redo": [

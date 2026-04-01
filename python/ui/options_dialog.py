@@ -132,6 +132,7 @@ class OptionsDialog(QDialog):
                  grid_max_dots: int = 20,
                  grid_dot_size: float = 1.0,
                  font_size: int = 48,
+                 jump_fraction: float = 0.2,
                  pan_hz: int = 120,
                  pan_vsync: bool = False,
                  parent=None):
@@ -181,6 +182,18 @@ class OptionsDialog(QDialog):
         font_row.addWidget(self._font_size_spin)
         font_row.addStretch()
         display_layout.addLayout(font_row)
+
+        # Jump-pan fraction
+        jump_row = QHBoxLayout()
+        jump_row.addWidget(QLabel("Jump pan fraction of screen:"))
+        self._jump_fraction_spin = QDoubleSpinBox()
+        self._jump_fraction_spin.setRange(0.05, 0.50)
+        self._jump_fraction_spin.setSingleStep(0.05)
+        self._jump_fraction_spin.setDecimals(2)
+        self._jump_fraction_spin.setValue(jump_fraction)
+        jump_row.addWidget(self._jump_fraction_spin)
+        jump_row.addStretch()
+        display_layout.addLayout(jump_row)
 
         layout.addWidget(display_group)
 
@@ -362,6 +375,11 @@ class OptionsDialog(QDialog):
     def font_size(self) -> int:
         """Return the configured canvas font size in world units."""
         return self._font_size_spin.value()
+
+    @property
+    def jump_fraction(self) -> float:
+        """Return the configured jump-pan fraction."""
+        return self._jump_fraction_spin.value()
 
     @property
     def show_fps(self) -> bool:

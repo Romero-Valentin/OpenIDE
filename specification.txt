@@ -38,13 +38,37 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Each wire is saved as a list of integer coordinates to retrace the whole wire.
 	- Wires can only be placed at positions that are multiples of 100.
 	- Wires are not automatically connected; user interaction is required.
+	- Every wire receives a name when created:
+	  • If the first coordinate of the wire is within one grid cell of a
+	    port, the port's name is used as the base name.
+	  • Otherwise, the base name is "sig".
+	  • If the base name (or "sig_N") is already used by another signal,
+	    the suffix "_N" is appended (N = lowest unused integer).
+	  • On paste, wire names are made unique using the same suffix logic.
 	- Each wire stores the following editable properties:
-	  • signal name: displayed on the canvas at the midpoint of the wire
-	    path.  Always visible (not only when selected).  Initially empty.
+	  • signal name: displayed on the canvas near the start of the wire,
+	    just above it, with a horizontal gap of two label-grid steps
+	    (50 world units) away from the port.  Always visible (not only
+	    when selected).  If the first segment goes left the text is
+	    right-aligned; otherwise it is left-aligned.
 	    Editable via right-click → Properties.
+	  • name offset: the label can be click-dragged to a custom position
+	    (offset relative to the default position, snapped to the 25-unit
+	    label grid).  The offset is preserved across moves.
+	  • font size: the label's font size in world-coordinate units
+	    (default: global font size, range 8–200).  Editable via
+	    right-click → Properties.
 	  • color: the line colour of the wire (default blue [0, 0, 255]).
 	    Editable via right-click → Properties, with the same 10 presets
 	    and custom RGB picker as modules.
+	- Selection visuals:
+	  • When a wire is selected (by clicking the wire, its label, or via
+	    rubber-band), the signal name label turns blue and a dotted blue
+	    rectangle is drawn around the label text.
+	  • Click-dragging a wire label also selects the parent wire.
+	  • When exactly one wire is selected and the label's centre is more
+	    than 300 world units from the closest point on the wire, a dotted
+	    blue leader line is drawn from the label centre to that point.
 
 2.4 VHDL Block (Module) — Properties
 	Each block stores the following properties:
@@ -139,7 +163,11 @@ The application provides a graphical interface for adding modules, wiring signal
 		- Undo / redo that restores the exact saved state turns the icon back to green.
 	- When 'Select object' is chosen, the user can:
 		- Click and drag on empty space to draw a selection rectangle. On release, every
-		  object (module, wire, or port) entirely or partially inside becomes selected.
+		  object (module, wire, or port) entirely or partially inside becomes selected;
+		  the previous selection is replaced.
+		- Hold CTRL and click-drag on empty space to draw an additive selection rectangle.
+		  Objects inside the rectangle are added to the current selection. If every object
+		  inside the rectangle was already selected, they are all deselected instead (toggle).
 		- Hold CTRL and left-click an object to toggle it in/out of the current selection.
 		- Click and drag a wire segment to move the entire wire.
 		- Click and drag a wire node to move that single node.
@@ -148,6 +176,8 @@ The application provides a graphical interface for adding modules, wiring signal
 		- Click and drag a port marker to reposition the port to a different block edge
 		  (see §2.5).
 		- Click and drag a module label (instance name or entity name) to reposition the label.
+		- Click and drag a wire name label to reposition the signal name text
+		  (snapped to the 25-unit label grid; see §2.3).
 		- Click and drag a port label to reposition the port name text.
 		- When multiple objects are selected, dragging any one of them moves all selected
 		  objects together.
@@ -175,6 +205,10 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> Pan right:       Right arrow, D
 		-> Pan up:          Up arrow, W, Z
 		-> Pan down:        Down arrow, S
+		-> Jump left:       Shift+Left
+		-> Jump right:      Shift+Right
+		-> Jump up:         Shift+Up
+		-> Jump down:       Shift+Down
 		-> Undo:            Ctrl+Z
 		-> Redo:            Ctrl+E
 		-> Save project:    Ctrl+S
@@ -182,6 +216,9 @@ The application provides a graphical interface for adding modules, wiring signal
 		-> Paste:           Ctrl+V
 		-> Delete selected: Delete
 		-> Cancel action:   Escape
+	- Jump pan moves the viewport by one fifth of the visible screen
+	  in the specified direction (default 1/5, configurable in Options).
+	  Useful for quick repositioning.
 	- New default actions added in future updates are automatically merged
 	  into existing user configurations without overwriting customisations.
 

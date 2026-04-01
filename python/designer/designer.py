@@ -73,6 +73,7 @@ class DesignerWidget(QWidget):
         # Rubber-band selection rectangle
         self._rubber_band_start = None
         self._rubber_band_end = None
+        self._rubber_band_ctrl = False  # True when CTRL held at rubber-band start
 
         # Resize state
         self._resize_mod_idx = None      # module being resized
@@ -86,6 +87,9 @@ class DesignerWidget(QWidget):
         self._label_port_idx = None      # port index (for port-label drag)
         self._label_drag_start = None    # raw cursor at drag start
         self._label_orig_offset = None   # original [ox, oy] before drag
+
+        # Wire-label drag state
+        self._wire_label_idx = None      # wire index whose label is being dragged
 
         # Port-drag state (repositioning a port to a different edge)
         self._port_drag_mod_idx = None
@@ -116,6 +120,7 @@ class DesignerWidget(QWidget):
         self._font_size = WORLD_FONT_SIZE
         self._world_font = QFont(self.font())
         self._world_font.setPixelSize(self._font_size)
+        self._jump_fraction = 0.2  # fraction of screen for jump-pan
         self._world_fm = QFontMetrics(self._world_font)
 
         # Optional callback invoked whenever the design state changes.
@@ -158,6 +163,17 @@ class DesignerWidget(QWidget):
         self._world_font.setPixelSize(self._font_size)
         self._world_fm = QFontMetrics(self._world_font)
         self.update()
+
+    # --- Jump-pan fraction property ----------------------------------------
+
+    @property
+    def jump_fraction(self) -> float:
+        """Fraction of the visible area used for jump-pan."""
+        return self._jump_fraction
+
+    @jump_fraction.setter
+    def jump_fraction(self, value: float):
+        self._jump_fraction = max(0.05, min(value, 0.5))
 
     # ------------------------------------------------------------------
     # Undo / Redo
@@ -275,6 +291,25 @@ class DesignerWidget(QWidget):
         dx, dy = x2 - x1, y2 - y1
         t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
         return hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+    @staticmethod
+    def _closest_point_on_wire(px, py, coords):
+        """Return the (x, y) on the wire polyline closest to (px, py)."""
+        best = (coords[0][0], coords[0][1])
+        best_dist = hypot(px - best[0], py - best[1])
+        for i in range(len(coords) - 1):
+            x1, y1 = coords[i]
+            x2, y2 = coords[i + 1]
+            if (x1, y1) == (x2, y2):
+                continue
+            dx, dy = x2 - x1, y2 - y1
+            t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+            cx, cy = x1 + t * dx, y1 + t * dy
+            d = hypot(px - cx, py - cy)
+            if d < best_dist:
+                best_dist = d
+                best = (cx, cy)
+        return best
 
     @staticmethod
     def _segment_intersects_rect(x1, y1, x2, y2, rect: QRect) -> bool:
@@ -561,6 +596,61 @@ class DesignerWidget(QWidget):
             return px - tw / 2, py + inset
         else:  # bottom
             return px - tw / 2, py - inset - th
+
+    def _hit_test_wire_label(self, raw_pos) -> int | None:
+        """Return the wire index whose name label is hit, or None."""
+        rx, ry = raw_pos
+        pad = LABEL_HIT_PADDING / max(self.zoom, 0.01)
+        for idx in range(len(self.signals) - 1, -1, -1):
+            sig = self.signals[idx]
+            name = sig.get('name', '')
+            if not name:
+                continue
+            coords = sig.get('coordinates', [])
+            if not coords:
+                continue
+            fs = sig.get('font_size', self._font_size)
+            if fs == self._font_size:
+                fm = self._world_fm
+            else:
+                f = QFont(self.font())
+                f.setPixelSize(fs)
+                fm = QFontMetrics(f)
+            lx, ly = self._default_wire_label_pos(sig, fm)
+            off = sig.get('name_offset', [0, 0])
+            lx += off[0]
+            ly += off[1]
+            tw = fm.horizontalAdvance(name)
+            th = fm.height()
+            if QRectF(lx - pad, ly - pad, tw + 2 * pad, th + 2 * pad).contains(rx, ry):
+                return idx
+        return None
+
+    def _default_wire_label_pos(self, sig, fm):
+        """Return the default top-left (x, y) for a wire's name label.
+
+        The label is placed at the first coordinate of the wire, just
+        above it, with a horizontal gap of 2 label-grid steps
+        (2 × GRID_LABEL) away from the port.  If the first segment
+        goes left the text is right-aligned; otherwise left-aligned.
+        """
+        coords = sig.get('coordinates', [])
+        name = sig.get('name', '')
+        tw = fm.horizontalAdvance(name)
+        th = fm.height()
+        if not coords:
+            return 0, 0
+        x0, y0 = coords[0]
+        gap = 2 * GRID_LABEL  # 50 world units away from the port
+        # Determine alignment from the first segment direction
+        goes_left = (len(coords) >= 2 and coords[1][0] < x0)
+        if goes_left:
+            lx = x0 - tw - gap
+        else:
+            lx = x0 + gap
+        # Position just above the wire start (no vertical gap)
+        ly = y0 - th
+        return lx, ly
 
     def _hit_test_port_marker(self, raw_pos):
         """Return (module_idx, port_idx) if a port marker is hit, else (None, None)."""
@@ -882,15 +972,19 @@ class DesignerWidget(QWidget):
             ]))
 
     def _draw_signals(self, painter):
-        painter.setFont(self._world_font)
+        sel_blue = QColor(0, 100, 255)
+        # Track label rectangles of selected wires for leader-line pass
+        label_rects: list[tuple[int, QRectF]] = []  # (sig_idx, rect)
+
         for sig_idx, sig in enumerate(self.signals):
             coords = sig.get('coordinates', [])
             wire_rgb = sig.get('color', DEFAULT_WIRE_COLOR)
             wire_color = QColor(*wire_rgb)
+            selected = sig_idx in self.selected_wires
 
             # Selected wires: highlighted in blue with thicker lines
-            if sig_idx in self.selected_wires:
-                painter.setPen(QPen(QColor(0, 100, 255), 5))
+            if selected:
+                painter.setPen(QPen(sel_blue, 5))
             else:
                 painter.setPen(QPen(wire_color, 3))
             for i in range(len(coords) - 1):
@@ -899,15 +993,56 @@ class DesignerWidget(QWidget):
                     coords[i + 1][0], coords[i + 1][1],
                 )
 
-            # Always draw the signal name at the midpoint of the wire
+            # Draw the signal name label at the computed position
             name = sig.get('name', '')
             if name and coords:
-                mid = len(coords) // 2
-                if sig_idx in self.selected_wires:
-                    painter.setPen(QPen(QColor(0, 100, 255), 1))
+                fs = sig.get('font_size', self._font_size)
+                if fs == self._font_size:
+                    wfont, wfm = self._world_font, self._world_fm
+                else:
+                    wfont = QFont(self.font())
+                    wfont.setPixelSize(fs)
+                    wfm = QFontMetrics(wfont)
+                painter.setFont(wfont)
+                lx, ly = self._default_wire_label_pos(sig, wfm)
+                off = sig.get('name_offset', [0, 0])
+                lx += off[0]
+                ly += off[1]
+                tw = wfm.horizontalAdvance(name)
+                th = wfm.height()
+
+                if selected:
+                    painter.setPen(QPen(sel_blue, 1))
                 else:
                     painter.setPen(QPen(wire_color, 1))
-                painter.drawText(coords[mid][0] + 5, coords[mid][1] - 5, name)
+                painter.drawText(int(lx), int(ly + wfm.ascent()), name)
+
+                # Selection highlight: dotted blue rectangle around the label
+                if selected:
+                    label_rect = QRectF(lx, ly, tw, th)
+                    painter.setPen(QPen(sel_blue, 2, Qt.DashLine))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(label_rect)
+                    label_rects.append((sig_idx, label_rect))
+
+        # Leader line: only when exactly one wire is selected
+        if len(label_rects) == 1 and len(self.selected_wires) == 1:
+            sig_idx, lrect = label_rects[0]
+            sig = self.signals[sig_idx]
+            coords = sig.get('coordinates', [])
+            if coords:
+                # Centre of the label rectangle
+                cx = lrect.center().x()
+                cy = lrect.center().y()
+                # Find closest point on the wire polyline
+                wp = self._closest_point_on_wire(cx, cy, coords)
+                dist = hypot(cx - wp[0], cy - wp[1])
+                if dist > 300:
+                    painter.setPen(QPen(sel_blue, 2, Qt.DashLine))
+                    painter.drawLine(int(cx), int(cy), int(wp[0]), int(wp[1]))
+
+        # Restore default font
+        painter.setFont(self._world_font)
 
     def _draw_current_wire(self, painter):
         if self.drawing_wire and len(self.current_wire) > 1:
@@ -974,6 +1109,27 @@ class DesignerWidget(QWidget):
         elif self._move_direction == 'up':
             self.offset_y += step
         elif self._move_direction == 'down':
+            self.offset_y -= step
+        self.update()
+
+    def _jump_pan(self, direction: str):
+        """Instantly pan the viewport by a fraction of the visible area.
+
+        *direction* is one of ``'left'``, ``'right'``, ``'up'``, ``'down'``.
+        The offset is in screen pixels so the jump is always
+        ``_jump_fraction`` of the widget's current width or height.
+        """
+        if direction in ('left', 'right'):
+            step = self.width() * self._jump_fraction
+        else:
+            step = self.height() * self._jump_fraction
+        if direction == 'left':
+            self.offset_x += step
+        elif direction == 'right':
+            self.offset_x -= step
+        elif direction == 'up':
+            self.offset_y += step
+        elif direction == 'down':
             self.offset_y -= step
         self.update()
 
@@ -1069,6 +1225,15 @@ class DesignerWidget(QWidget):
             self._move_timer.start()
             return
 
+        # Jump pan — instant 1/3-screen leap
+        jump_actions = {
+            'jump_left': 'left', 'jump_right': 'right',
+            'jump_up': 'up', 'jump_down': 'down',
+        }
+        if action in jump_actions:
+            self._jump_pan(jump_actions[action])
+            return
+
     def keyReleaseEvent(self, event):
         if event.isAutoRepeat():
             return
@@ -1134,6 +1299,68 @@ class DesignerWidget(QWidget):
                     used.add(int(suffix))
         n = 0
         while n in used:
+            n += 1
+        return f'{stem}_{n}'
+
+    def _generate_wire_name(self, coords: list) -> str:
+        """Generate a unique name for a new wire.
+
+        If the first coordinate is within one grid cell of a port, the
+        port's name is used as the base.  Otherwise the base is 'sig'.
+        In both cases the name is made unique among existing signals by
+        appending ``_N`` when necessary.
+        """
+        existing = {sig.get('name', '') for sig in self.signals}
+
+        # Check if start point is near any port
+        base_name = None
+        if coords:
+            x0, y0 = coords[0]
+            best_dist = GRID_PORT + 1
+            for mod in self.modules:
+                positions = self._compute_port_positions(mod)
+                for pidx, port in enumerate(mod.get('ports', [])):
+                    if pidx >= len(positions) or positions[pidx] is None:
+                        continue
+                    px, py = positions[pidx]
+                    dist = hypot(px - x0, py - y0)
+                    if dist < best_dist:
+                        best_dist = dist
+                        base_name = port.get('name', '')
+            if best_dist > GRID_PORT:
+                base_name = None
+
+        if base_name:
+            # Port-derived name: use directly if available
+            if base_name not in existing:
+                return base_name
+            n = 0
+            while f'{base_name}_{n}' in existing:
+                n += 1
+            return f'{base_name}_{n}'
+        else:
+            # Auto-generated name
+            n = 0
+            while f'sig_{n}' in existing:
+                n += 1
+            return f'sig_{n}'
+
+    def _unique_wire_name(self, base: str) -> str:
+        """Return a unique wire name, appending ``_N`` if *base* is taken.
+
+        Strips an existing numeric suffix before searching, just like
+        ``_next_name_for`` does for modules.
+        """
+        existing = {sig.get('name', '') for sig in self.signals}
+        if base not in existing:
+            return base
+        parts = base.rsplit('_', 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            stem = parts[0]
+        else:
+            stem = base
+        n = 0
+        while f'{stem}_{n}' in existing:
             n += 1
         return f'{stem}_{n}'
 
@@ -1204,6 +1431,8 @@ class DesignerWidget(QWidget):
                 (pt[0] + dx, pt[1] + dy)
                 for pt in s.get('coordinates', [])
             ]
+            # Ensure pasted wires keep unique names
+            s['name'] = self._unique_wire_name(s.get('name', 'sig_0'))
             self.signals.append(s)
 
         # --- select only the pasted objects ------------------------------
@@ -1371,7 +1600,31 @@ class DesignerWidget(QWidget):
             self.update()
             return
 
-        # --- 5 & 6. Wire nodes / segments ---
+        # --- 5. Wire labels ---
+        wl_idx = self._hit_test_wire_label(raw_pos)
+        if wl_idx is not None:
+            # Select the wire (or toggle if CTRL held)
+            if ctrl:
+                if wl_idx in self.selected_wires:
+                    self.selected_wires.discard(wl_idx)
+                    self.update()
+                    return
+                else:
+                    self.selected_wires.add(wl_idx)
+            else:
+                self.selected_modules.clear()
+                self.selected_wires.clear()
+                self.selected_wires.add(wl_idx)
+            sig = self.signals[wl_idx]
+            self._save_undo()
+            self._drag_type = 'move_wire_label'
+            self._wire_label_idx = wl_idx
+            self._label_drag_start = raw_pos
+            self._label_orig_offset = list(sig.get('name_offset', [0, 0]))
+            self.update()
+            return
+
+        # --- 6 & 7. Wire nodes / segments ---
         hit_wire = None
         hit_node = None
 
@@ -1467,6 +1720,7 @@ class DesignerWidget(QWidget):
                 self.selected_modules.clear()
                 self.selected_wires.clear()
             self._drag_type = 'rubber_band'
+            self._rubber_band_ctrl = ctrl
             self._rubber_band_start = raw_pos
             self._rubber_band_end = raw_pos
 
@@ -1491,7 +1745,8 @@ class DesignerWidget(QWidget):
         if self._drag_type == 'rubber_band':
             self._finalize_rubber_band()
         elif self._drag_type in ('move_selection', 'node', 'resize_edge',
-                                  'move_label', 'move_port_label', 'move_port'):
+                                  'move_label', 'move_port_label', 'move_port',
+                                  'move_wire_label'):
             self._pop_undo_if_unchanged()
 
         # Reset all drag state (keep selection)
@@ -1513,6 +1768,7 @@ class DesignerWidget(QWidget):
         self._label_port_idx = None
         self._label_drag_start = None
         self._label_orig_offset = None
+        self._wire_label_idx = None
         self._port_drag_mod_idx = None
         self._port_drag_orig = None
         self._port_drag_primary_idx = None
@@ -1521,7 +1777,13 @@ class DesignerWidget(QWidget):
         self.update()
 
     def _finalize_rubber_band(self):
-        """Select all modules and wires that intersect the rubber-band rect."""
+        """Select objects that intersect the rubber-band rectangle.
+
+        Without CTRL: replaces the current selection.
+        With CTRL: additive — new objects are added to the selection.
+        If every object in the rectangle was *already* selected, they
+        are removed instead (toggle-deselect behaviour).
+        """
         if not self._rubber_band_start or not self._rubber_band_end:
             return
         x1, y1 = self._rubber_band_start
@@ -1530,38 +1792,35 @@ class DesignerWidget(QWidget):
             int(min(x1, x2)), int(min(y1, y2)),
             int(abs(x2 - x1)), int(abs(y2 - y1)),
         )
-        self.selected_modules.clear()
-        self.selected_wires.clear()
-        self.selected_ports.clear()
 
-        # Select modules whose bounding rect intersects the selection rect
+        # --- Collect objects inside the rectangle ---
+        rect_modules: set[int] = set()
+        rect_wires: set[int] = set()
+        rect_ports: set[tuple[int, int]] = set()
+
         for idx, mod in enumerate(self.modules):
             if sel_rect.intersects(self._module_rect(mod)):
-                self.selected_modules.add(idx)
+                rect_modules.add(idx)
 
-        # Select wires whose bounding box or any segment intersects the rect
         for idx, sig in enumerate(self.signals):
             coords = sig.get('coordinates', [])
-            selected = False
-            # Check if any vertex is inside the rectangle
+            hit = False
             for coord in coords:
                 if sel_rect.contains(QPoint(int(coord[0]), int(coord[1]))):
-                    selected = True
+                    hit = True
                     break
-            # Check if any segment intersects the rectangle (partial overlap)
-            if not selected:
+            if not hit:
                 for i in range(len(coords) - 1):
                     if self._segment_intersects_rect(
                         coords[i][0], coords[i][1],
                         coords[i + 1][0], coords[i + 1][1],
                         sel_rect,
                     ):
-                        selected = True
+                        hit = True
                         break
-            if selected:
-                self.selected_wires.add(idx)
+            if hit:
+                rect_wires.add(idx)
 
-        # Select ports whose markers fall inside the selection rect
         for mod_idx, mod in enumerate(self.modules):
             positions = self._compute_port_positions(mod)
             for port_idx in range(len(mod.get('ports', []))):
@@ -1569,14 +1828,42 @@ class DesignerWidget(QWidget):
                     continue
                 px, py = positions[port_idx]
                 if sel_rect.contains(QPoint(int(px), int(py))):
-                    self.selected_ports.add((mod_idx, port_idx))
+                    rect_ports.add((mod_idx, port_idx))
+
+        if self._rubber_band_ctrl:
+            # CTRL held: additive / toggle-deselect.
+            # If every object in the rect is already selected, deselect them;
+            # otherwise add them all to the current selection.
+            all_already = (
+                rect_modules.issubset(self.selected_modules)
+                and rect_wires.issubset(self.selected_wires)
+                and rect_ports.issubset(self.selected_ports)
+                and (rect_modules or rect_wires or rect_ports)
+            )
+            if all_already:
+                self.selected_modules -= rect_modules
+                self.selected_wires -= rect_wires
+                self.selected_ports -= rect_ports
+            else:
+                self.selected_modules |= rect_modules
+                self.selected_wires |= rect_wires
+                self.selected_ports |= rect_ports
+        else:
+            # No CTRL: replace selection entirely
+            self.selected_modules = rect_modules
+            self.selected_wires = rect_wires
+            self.selected_ports = rect_ports
 
     def mouseDoubleClickEvent(self, event):
         if self.drawing_wire and len(self.current_wire) > 1:
             # Snapshot BEFORE adding the new wire
             self._save_undo()
             self.drawing_wire = False
-            self.signals.append({'coordinates': self.current_wire})
+            name = self._generate_wire_name(self.current_wire)
+            self.signals.append({
+                'coordinates': self.current_wire,
+                'name': name,
+            })
             self.current_wire = []
             self._notify_design_changed()
             self.update()
@@ -1627,6 +1914,9 @@ class DesignerWidget(QWidget):
 
             elif self._drag_type == 'move_port_label':
                 self._apply_port_label_drag(raw_pos)
+
+            elif self._drag_type == 'move_wire_label':
+                self._apply_wire_label_drag(raw_pos)
 
             elif self._drag_type == 'move_port':
                 self._apply_port_reposition(raw_pos)
@@ -1691,6 +1981,18 @@ class DesignerWidget(QWidget):
         dy = raw_pos[1] - self._label_drag_start[1]
         port = self.modules[self._label_mod_idx]['ports'][self._label_port_idx]
         port['label_offset'] = [
+            self._snap_label(self._label_orig_offset[0] + dx),
+            self._snap_label(self._label_orig_offset[1] + dy),
+        ]
+
+    def _apply_wire_label_drag(self, raw_pos):
+        """Update the wire name-label offset based on cursor movement.
+
+        The offset snaps to GRID_LABEL (25-unit grid).
+        """
+        dx = raw_pos[0] - self._label_drag_start[0]
+        dy = raw_pos[1] - self._label_drag_start[1]
+        self.signals[self._wire_label_idx]['name_offset'] = [
             self._snap_label(self._label_orig_offset[0] + dx),
             self._snap_label(self._label_orig_offset[1] + dy),
         ]
@@ -1818,12 +2120,14 @@ class DesignerWidget(QWidget):
         dlg = WirePropertiesDialog(
             name=sig.get('name', ''),
             colour=sig.get('color', DEFAULT_WIRE_COLOR),
+            font_size=sig.get('font_size', self._font_size),
             parent=self,
         )
         if dlg.exec():
             self._save_undo()
             sig['name'] = dlg.signal_name
             sig['color'] = dlg.colour
+            sig['font_size'] = dlg.font_size
             self._notify_design_changed()
             self.update()
 
@@ -1851,6 +2155,7 @@ class DesignerWidget(QWidget):
             modules=sel_mods,
             wires=sel_wires,
             default_colour=default_colour,
+            default_font_size=self._font_size,
             parent=self,
         )
         if dlg.exec():
@@ -1866,6 +2171,9 @@ class DesignerWidget(QWidget):
                 sel_mods[0]['name'] = dlg.module_name
             if dlg.signal_name is not None and sel_wires:
                 sel_wires[0]['name'] = dlg.signal_name
+            # Apply font_size for single-wire selection
+            if dlg.font_size is not None and sel_wires:
+                sel_wires[0]['font_size'] = dlg.font_size
             self._notify_design_changed()
             self.update()
 

@@ -140,6 +140,11 @@ def _defaults() -> dict[str, list[KeyCombo]]:
         "pan_right":  [C("Right"), C("D")],
         "pan_up":     [C("Up"), C("W"), C("Z")],
         "pan_down":   [C("Down"), C("S")],
+        # Jump pan (1/3 of screen)
+        "jump_left":  [C("Left", frozenset({"Shift"}))],
+        "jump_right": [C("Right", frozenset({"Shift"}))],
+        "jump_up":    [C("Up", frozenset({"Shift"}))],
+        "jump_down":  [C("Down", frozenset({"Shift"}))],
         # Editing
         "undo":       [C("Z", frozenset({"Ctrl"}))],
         "redo":       [C("E", frozenset({"Ctrl"}))],

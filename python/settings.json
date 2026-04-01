@@ -1,6 +1,8 @@
 {
+  "font_size": 48,
   "grid_dot_size": 1.0,
   "grid_max_dots": 20,
+  "jump_fraction": 0.2,
   "pan_hz": 120,
   "pan_vsync": true,
   "show_fps": true,

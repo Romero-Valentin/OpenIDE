@@ -290,6 +290,8 @@ class MainWindow(QMainWindow):
             "grid_dot_size", 1.0)
         self.designer_widget.font_size = self._settings.get(
             "font_size", 48)
+        self.designer_widget.jump_fraction = self._settings.get(
+            "jump_fraction", 0.2)
         # Pan tick rate (VSync is the default)
         pan_vsync = self._settings.get("pan_vsync", True)
         pan_hz = self._settings.get("pan_hz", 120)
@@ -304,6 +306,7 @@ class MainWindow(QMainWindow):
         self._settings["grid_max_dots"] = self.designer_widget.grid_max_dots
         self._settings["grid_dot_size"] = self.designer_widget.grid_dot_size
         self._settings["font_size"] = self.designer_widget.font_size
+        self._settings["jump_fraction"] = self.designer_widget.jump_fraction
         self._settings["pan_hz"] = self.designer_widget._pan_hz
         self._settings["pan_vsync"] = self.designer_widget._pan_vsync
         os.makedirs(os.path.dirname(_SETTINGS_PATH) or ".", exist_ok=True)
@@ -321,6 +324,7 @@ class MainWindow(QMainWindow):
             grid_max_dots=self.designer_widget.grid_max_dots,
             grid_dot_size=self.designer_widget.grid_dot_size,
             font_size=self.designer_widget.font_size,
+            jump_fraction=self.designer_widget.jump_fraction,
             pan_hz=self.designer_widget._pan_hz,
             pan_vsync=self.designer_widget._pan_vsync,
             parent=self,
@@ -331,6 +335,8 @@ class MainWindow(QMainWindow):
             self.designer_widget.grid_max_dots = dlg.grid_max_dots
             self.designer_widget.grid_dot_size = dlg.grid_dot_size
             self.designer_widget.font_size = dlg.font_size
+            # Apply jump-pan fraction
+            self.designer_widget.jump_fraction = dlg.jump_fraction
             # Apply FPS overlay toggle
             self.designer_widget.show_fps = dlg.show_fps
             # Apply pan tick rate

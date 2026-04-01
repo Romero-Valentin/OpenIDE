@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QGroupBox, QGridLayout, QColorDialog,
+    QPushButton, QGroupBox, QGridLayout, QColorDialog, QSpinBox,
 )
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
@@ -166,9 +166,11 @@ class WirePropertiesDialog(QDialog):
     Fields:
     - Signal name (editable text, displayed on the canvas).
     - Wire colour (preset grid + custom RGB picker).
+    - Font size (world-coordinate units for the label).
     """
 
-    def __init__(self, name: str, colour: list[int], *, parent=None):
+    def __init__(self, name: str, colour: list[int], *,
+                 font_size: int = 48, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Wire Properties")
         self.setMinimumWidth(340)
@@ -181,6 +183,16 @@ class WirePropertiesDialog(QDialog):
         self._name_edit = QLineEdit(name)
         name_lay.addWidget(self._name_edit)
         layout.addWidget(name_group)
+
+        # --- Font size ---
+        fs_group = QGroupBox("Font Size")
+        fs_lay = QHBoxLayout(fs_group)
+        self._font_spin = QSpinBox()
+        self._font_spin.setRange(8, 200)
+        self._font_spin.setValue(font_size)
+        self._font_spin.setSuffix(" units")
+        fs_lay.addWidget(self._font_spin)
+        layout.addWidget(fs_group)
 
         # --- Colour ---
         self._colour_picker = _ColourPicker("Wire Colour", colour)
@@ -207,6 +219,10 @@ class WirePropertiesDialog(QDialog):
     def colour(self) -> list[int]:
         return self._colour_picker.colour
 
+    @property
+    def font_size(self) -> int:
+        return self._font_spin.value()
+
 
 # ---------------------------------------------------------------------------
 # Multi-selection properties dialog
@@ -221,8 +237,8 @@ class MultiPropertiesDialog(QDialog):
     - **Colour** is always shown (both modules and wires have colour).
     - **Instance name** is shown only when exactly one module is selected
       and no wires are selected.
-    - **Signal name** is shown only when exactly one wire is selected
-      and no modules are selected.
+    - **Signal name** and **font size** are shown only when exactly one
+      wire is selected and no modules are selected.
 
     Parameters
     ----------
@@ -233,10 +249,13 @@ class MultiPropertiesDialog(QDialog):
     default_colour : list[int]
         Initial colour shown in the picker.  When objects share the same
         colour it is that colour; otherwise the first object's colour.
+    default_font_size : int
+        Fallback font size when the wire has no explicit value.
     """
 
     def __init__(self, modules: list[dict], wires: list[dict],
-                 default_colour: list[int], *, parent=None):
+                 default_colour: list[int], *,
+                 default_font_size: int = 48, parent=None):
         super().__init__(parent)
         n_mods = len(modules)
         n_wires = len(wires)
@@ -257,12 +276,24 @@ class MultiPropertiesDialog(QDialog):
 
         # --- Signal name (single wire only) ---
         self._signal_edit: QLineEdit | None = None
+        self._font_spin: QSpinBox | None = None
         if n_wires == 1 and n_mods == 0:
             sig_group = QGroupBox("Signal Name")
             sig_lay = QHBoxLayout(sig_group)
             self._signal_edit = QLineEdit(wires[0].get('name', ''))
             sig_lay.addWidget(self._signal_edit)
             layout.addWidget(sig_group)
+
+            # --- Font size (single wire only) ---
+            fs_group = QGroupBox("Font Size")
+            fs_lay = QHBoxLayout(fs_group)
+            self._font_spin = QSpinBox()
+            self._font_spin.setRange(8, 200)
+            self._font_spin.setValue(
+                wires[0].get('font_size', default_font_size))
+            self._font_spin.setSuffix(" units")
+            fs_lay.addWidget(self._font_spin)
+            layout.addWidget(fs_group)
 
         # --- Colour (always shown — common to both types) ---
         self._colour_picker = _ColourPicker("Colour", default_colour)
@@ -290,6 +321,11 @@ class MultiPropertiesDialog(QDialog):
     def signal_name(self) -> str | None:
         """Signal name if the field was shown, else None."""
         return self._signal_edit.text().strip() if self._signal_edit else None
+
+    @property
+    def font_size(self) -> int | None:
+        """Font size if the field was shown, else None."""
+        return self._font_spin.value() if self._font_spin else None
 
     @property
     def colour(self) -> list[int]:
