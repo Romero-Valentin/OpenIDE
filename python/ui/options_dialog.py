@@ -12,7 +12,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QLabel, QMessageBox, QAbstractItemView,
-    QCheckBox, QGroupBox, QComboBox,
+    QCheckBox, QGroupBox, QComboBox, QSpinBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
@@ -129,6 +129,9 @@ class OptionsDialog(QDialog):
     def __init__(self, keybindings: KeyBindings, *,
                  show_fps: bool = False,
                  show_grid: bool = True,
+                 grid_max_dots: int = 20,
+                 grid_dot_size: float = 1.0,
+                 font_size: int = 48,
                  pan_hz: int = 120,
                  pan_vsync: bool = False,
                  parent=None):
@@ -146,6 +149,39 @@ class OptionsDialog(QDialog):
         self._grid_checkbox = QCheckBox("Show grid dots")
         self._grid_checkbox.setChecked(show_grid)
         display_layout.addWidget(self._grid_checkbox)
+
+        # Grid density (max dots per axis)
+        density_row = QHBoxLayout()
+        density_row.addWidget(QLabel("Max grid dots per row / column:"))
+        self._grid_density_spin = QSpinBox()
+        self._grid_density_spin.setRange(5, 100)
+        self._grid_density_spin.setValue(grid_max_dots)
+        density_row.addWidget(self._grid_density_spin)
+        density_row.addStretch()
+        display_layout.addLayout(density_row)
+
+        # Grid dot size (screen-pixel radius)
+        dot_size_row = QHBoxLayout()
+        dot_size_row.addWidget(QLabel("Grid dot radius (screen pixels):"))
+        self._grid_dot_size_spin = QDoubleSpinBox()
+        self._grid_dot_size_spin.setRange(0.5, 10.0)
+        self._grid_dot_size_spin.setSingleStep(0.5)
+        self._grid_dot_size_spin.setDecimals(1)
+        self._grid_dot_size_spin.setValue(grid_dot_size)
+        dot_size_row.addWidget(self._grid_dot_size_spin)
+        dot_size_row.addStretch()
+        display_layout.addLayout(dot_size_row)
+
+        # Canvas font size (world units)
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Canvas font size (world units):"))
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(8, 200)
+        self._font_size_spin.setValue(font_size)
+        font_row.addWidget(self._font_size_spin)
+        font_row.addStretch()
+        display_layout.addLayout(font_row)
+
         layout.addWidget(display_group)
 
         # --- Performance section -------------------------------------------
@@ -311,6 +347,21 @@ class OptionsDialog(QDialog):
     def show_grid(self) -> bool:
         """Return the current state of the grid-visibility checkbox."""
         return self._grid_checkbox.isChecked()
+
+    @property
+    def grid_max_dots(self) -> int:
+        """Return the configured max grid dots per axis."""
+        return self._grid_density_spin.value()
+
+    @property
+    def grid_dot_size(self) -> float:
+        """Return the configured grid dot radius in screen pixels."""
+        return self._grid_dot_size_spin.value()
+
+    @property
+    def font_size(self) -> int:
+        """Return the configured canvas font size in world units."""
+        return self._font_size_spin.value()
 
     @property
     def show_fps(self) -> bool:

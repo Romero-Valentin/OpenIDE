@@ -26,6 +26,7 @@
             0
           ],
           "name": "clk",
+          "pos": 100,
           "side": "left"
         },
         {
@@ -35,6 +36,7 @@
             0
           ],
           "name": "reset",
+          "pos": 200,
           "side": "left"
         },
         {
@@ -44,6 +46,7 @@
             0
           ],
           "name": "clk_out",
+          "pos": 100,
           "side": "right"
         }
       ],
@@ -77,6 +80,7 @@
             0
           ],
           "name": "clk",
+          "pos": 100,
           "side": "left"
         },
         {
@@ -86,6 +90,7 @@
             0
           ],
           "name": "reset",
+          "pos": 200,
           "side": "left"
         },
         {
@@ -95,6 +100,7 @@
             0
           ],
           "name": "tx_data",
+          "pos": 300,
           "side": "left"
         },
         {
@@ -104,6 +110,7 @@
             0
           ],
           "name": "tx_start",
+          "pos": 400,
           "side": "left"
         },
         {
@@ -113,6 +120,7 @@
             0
           ],
           "name": "tx_busy",
+          "pos": 100,
           "side": "right"
         },
         {
@@ -122,6 +130,7 @@
             0
           ],
           "name": "tx_serial",
+          "pos": 200,
           "side": "right"
         },
         {
@@ -131,6 +140,7 @@
             0
           ],
           "name": "rx_serial",
+          "pos": 500,
           "side": "left"
         },
         {
@@ -140,6 +150,7 @@
             0
           ],
           "name": "rx_data",
+          "pos": 300,
           "side": "right"
         },
         {
@@ -149,6 +160,7 @@
             0
           ],
           "name": "rx_valid",
+          "pos": 400,
           "side": "right"
         },
         {
@@ -158,6 +170,7 @@
             0
           ],
           "name": "baud_sel",
+          "pos": 600,
           "side": "left"
         },
         {
@@ -167,6 +180,7 @@
             0
           ],
           "name": "data_bus",
+          "pos": 500,
           "side": "right"
         }
       ],
@@ -200,6 +214,7 @@
             0
           ],
           "name": "clk",
+          "pos": 100,
           "side": "left"
         },
         {
@@ -209,6 +224,7 @@
             0
           ],
           "name": "reset_n",
+          "pos": 200,
           "side": "left"
         },
         {
@@ -218,6 +234,7 @@
             0
           ],
           "name": "host_addr",
+          "pos": 300,
           "side": "left"
         },
         {
@@ -227,6 +244,7 @@
             0
           ],
           "name": "host_data",
+          "pos": 100,
           "side": "right"
         },
         {
@@ -236,6 +254,7 @@
             0
           ],
           "name": "host_wr_n",
+          "pos": 400,
           "side": "left"
         },
         {
@@ -245,6 +264,7 @@
             0
           ],
           "name": "host_rd_n",
+          "pos": 500,
           "side": "left"
         },
         {
@@ -254,6 +274,7 @@
             0
           ],
           "name": "host_cs_n",
+          "pos": 600,
           "side": "left"
         },
         {
@@ -263,6 +284,7 @@
             0
           ],
           "name": "host_ack",
+          "pos": 200,
           "side": "right"
         },
         {
@@ -272,6 +294,7 @@
             0
           ],
           "name": "host_irq",
+          "pos": 300,
           "side": "right"
         },
         {
@@ -281,6 +304,7 @@
             0
           ],
           "name": "mem_addr",
+          "pos": 400,
           "side": "right"
         },
         {
@@ -290,6 +314,7 @@
             0
           ],
           "name": "mem_data",
+          "pos": 500,
           "side": "right"
         },
         {
@@ -299,6 +324,7 @@
             0
           ],
           "name": "mem_we_n",
+          "pos": 600,
           "side": "right"
         },
         {
@@ -308,6 +334,7 @@
             0
           ],
           "name": "mem_oe_n",
+          "pos": 700,
           "side": "right"
         },
         {
@@ -317,6 +344,7 @@
             0
           ],
           "name": "mem_ce_n",
+          "pos": 800,
           "side": "right"
         },
         {
@@ -326,6 +354,7 @@
             0
           ],
           "name": "mem_ub_n",
+          "pos": 900,
           "side": "right"
         },
         {
@@ -335,6 +364,7 @@
             0
           ],
           "name": "mem_lb_n",
+          "pos": 1000,
           "side": "right"
         },
         {
@@ -344,6 +374,7 @@
             0
           ],
           "name": "busy",
+          "pos": 1100,
           "side": "right"
         },
         {
@@ -353,6 +384,7 @@
             0
           ],
           "name": "error_flag",
+          "pos": 1200,
           "side": "right"
         },
         {
@@ -362,6 +394,7 @@
             0
           ],
           "name": "debug_bus",
+          "pos": 1300,
           "side": "right"
         },
         {
@@ -371,6 +404,7 @@
             0
           ],
           "name": "config_in",
+          "pos": 700,
           "side": "left"
         }
       ],

@@ -1,4 +1,7 @@
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import (
+    QWidget, QMenu, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QWidgetAction, QFrame,
+)
 from PySide6.QtGui import QPainter, QColor, QPen, QPolygon, QFont, QFontMetrics
 from PySide6.QtCore import Qt, QRect, QPoint, QTimer, QRectF
 from math import hypot
@@ -10,18 +13,22 @@ import time
 # ---------------------------------------------------------------------------
 # Grid & layout constants
 # ---------------------------------------------------------------------------
-GRID_VISIBLE = 100          # visible dot grid spacing
+GRID_VISIBLE = 100          # base visible dot grid spacing
 GRID_MODULE = 100           # module position snap
 GRID_MODULE_SIZE = 100      # module size snap (width / height)
 GRID_PORT = 100             # port absolute-position snap
 GRID_LABEL = 25             # label offset snap
 
+DEFAULT_GRID_MAX_DOTS = 20  # max visible dots per axis (row / column)
+DEFAULT_GRID_DOT_SIZE = 1.0  # grid dot radius in screen pixels
+
 DEFAULT_MODULE_W = 300
 DEFAULT_MODULE_H = 500
 DEFAULT_MODULE_COLOR = [0, 200, 0]   # RGB (green)
+DEFAULT_WIRE_COLOR = [0, 0, 255]    # RGB (blue)
 
 PORT_MARKER_SIZE = 24
-WORLD_FONT_SIZE = 48         # font size in world-coordinate units
+WORLD_FONT_SIZE = 48         # default font size in world-coordinate units
 
 # Hit-testing radii (screen pixels — divided by zoom at runtime)
 NODE_HIT_RADIUS_PX = 10
@@ -106,8 +113,9 @@ class DesignerWidget(QWidget):
 
         # World-coordinate font used for all in-canvas text.
         # Created once and reused by paintEvent and hit-testing methods.
+        self._font_size = WORLD_FONT_SIZE
         self._world_font = QFont(self.font())
-        self._world_font.setPixelSize(WORLD_FONT_SIZE)
+        self._world_font.setPixelSize(self._font_size)
         self._world_fm = QFontMetrics(self._world_font)
 
         # Optional callback invoked whenever the design state changes.
@@ -121,6 +129,8 @@ class DesignerWidget(QWidget):
         self.show_fps = False
         # Grid visibility — toggled via Options dialog
         self.show_grid = True
+        self.grid_max_dots = DEFAULT_GRID_MAX_DOTS  # max dots per axis
+        self.grid_dot_size = DEFAULT_GRID_DOT_SIZE  # dot radius in screen px
         self._paint_ms = 0.0             # last paintEvent duration in ms
         self._paint_history: collections.deque[float] = collections.deque(maxlen=100)
         self._paint_p1 = 0.0            # 1 % low  (2nd-worst of last 100)
@@ -133,6 +143,21 @@ class DesignerWidget(QWidget):
         # Keybindings — set by MainWindow after construction.
         # If None, no keyboard actions are processed.
         self.keybindings = None
+
+    # --- Font size property ------------------------------------------------
+
+    @property
+    def font_size(self) -> int:
+        """Current world-unit font size for all canvas text."""
+        return self._font_size
+
+    @font_size.setter
+    def font_size(self, value: int):
+        """Update the font and recalculate metrics when size changes."""
+        self._font_size = max(8, min(value, 200))
+        self._world_font.setPixelSize(self._font_size)
+        self._world_fm = QFontMetrics(self._world_font)
+        self.update()
 
     # ------------------------------------------------------------------
     # Undo / Redo
@@ -426,7 +451,7 @@ class DesignerWidget(QWidget):
         # Text-height constraint: top/bottom port names
         top_th = (fm.height() + inset) if sides['top'] else 0
         bot_th = (fm.height() + inset) if sides['bottom'] else 0
-        name_min_h = (top_th + WORLD_FONT_SIZE + bot_th) if (top_th or bot_th) else 0
+        name_min_h = (top_th + self._font_size + bot_th) if (top_th or bot_th) else 0
 
         # Snap UP so the minimum is never less than the requirement
         g = GRID_MODULE_SIZE
@@ -686,22 +711,34 @@ class DesignerWidget(QWidget):
         return left, top, right, bottom
 
     def _draw_grid(self, painter):
-        """Draw grid dots at a fixed screen-pixel size within the visible viewport.
+        """Draw grid dots within the visible viewport.
 
-        Each dot is drawn as a filled circle whose radius is constant in
-        screen pixels (3 px), making it visible at any zoom level.
+        The spacing is the smallest multiple of GRID_VISIBLE that keeps
+        the number of dots per axis at or below *grid_max_dots*.  Dot
+        radius is in world units so it scales naturally with zoom.
         """
         if not self.show_grid:
             return
         left, top, right, bottom = self._visible_rect()
-        grid = GRID_VISIBLE
+        view_w = right - left
+        view_h = bottom - top
+
+        # Adaptive spacing: pick the smallest multiple of GRID_VISIBLE
+        # that keeps the count per axis ≤ grid_max_dots.
+        base = GRID_VISIBLE
+        max_d = max(1, self.grid_max_dots)
+        kx = max(1, int(view_w / (base * max_d)) + 1) if view_w > base * max_d else 1
+        ky = max(1, int(view_h / (base * max_d)) + 1) if view_h > base * max_d else 1
+        k = max(kx, ky)          # uniform step so the grid stays square
+        grid = base * k
+
         x_start = int(left // grid) * grid
         y_start = int(top // grid) * grid
         x_end = int(right // grid + 1) * grid
         y_end = int(bottom // grid + 1) * grid
 
-        # Radius in world coordinates so the dot appears as ~3 screen pixels
-        r = 3.0 / self.zoom
+        # Dot radius: fixed screen-pixels, converted to world units
+        r = self.grid_dot_size / self.zoom
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(140, 140, 140))
         gx = x_start
@@ -845,30 +882,32 @@ class DesignerWidget(QWidget):
             ]))
 
     def _draw_signals(self, painter):
+        painter.setFont(self._world_font)
         for sig_idx, sig in enumerate(self.signals):
             coords = sig.get('coordinates', [])
+            wire_rgb = sig.get('color', DEFAULT_WIRE_COLOR)
+            wire_color = QColor(*wire_rgb)
+
             # Selected wires: highlighted in blue with thicker lines
             if sig_idx in self.selected_wires:
                 painter.setPen(QPen(QColor(0, 100, 255), 5))
             else:
-                painter.setPen(QPen(QColor(0, 0, 255), 3))
+                painter.setPen(QPen(wire_color, 3))
             for i in range(len(coords) - 1):
                 painter.drawLine(
                     coords[i][0], coords[i][1],
                     coords[i + 1][0], coords[i + 1][1],
                 )
-            # Draw signal name with slightly bigger font when selected
-            if sig_idx in self.selected_wires and coords:
-                name = sig.get('name', '')
-                if name:
-                    font = painter.font()
-                    old_size = font.pointSize()
-                    font.setPointSize(old_size + 2)
-                    painter.setFont(font)
-                    mid = len(coords) // 2
-                    painter.drawText(coords[mid][0] + 5, coords[mid][1] - 5, name)
-                    font.setPointSize(old_size)
-                    painter.setFont(font)
+
+            # Always draw the signal name at the midpoint of the wire
+            name = sig.get('name', '')
+            if name and coords:
+                mid = len(coords) // 2
+                if sig_idx in self.selected_wires:
+                    painter.setPen(QPen(QColor(0, 100, 255), 1))
+                else:
+                    painter.setPen(QPen(wire_color, 1))
+                painter.drawText(coords[mid][0] + 5, coords[mid][1] - 5, name)
 
     def _draw_current_wire(self, painter):
         if self.drawing_wire and len(self.current_wire) > 1:
@@ -1719,3 +1758,219 @@ class DesignerWidget(QWidget):
         if abs(pos[0] - last[0]) > abs(pos[1] - last[1]):
             return (pos[0], last[1])
         return (last[0], pos[1])
+
+    # ------------------------------------------------------------------
+    # Wire hit-testing (for context menu)
+    # ------------------------------------------------------------------
+
+    def _hit_test_wire(self, raw_pos) -> int | None:
+        """Return the index of the wire closest to *raw_pos*, or None."""
+        rx, ry = raw_pos
+        threshold = SEGMENT_HIT_RADIUS_PX / max(self.zoom, 0.01)
+        best_dist = threshold
+        best_idx = None
+        for idx, sig in enumerate(self.signals):
+            coords = sig.get('coordinates', [])
+            # Check nodes
+            for node in coords:
+                dist = hypot(rx - node[0], ry - node[1])
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = idx
+            # Check segments
+            for i in range(len(coords) - 1):
+                d = self._distance_to_segment(
+                    rx, ry,
+                    coords[i][0], coords[i][1],
+                    coords[i + 1][0], coords[i + 1][1],
+                )
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = idx
+        return best_idx
+
+    # ------------------------------------------------------------------
+    # Properties dialogs (opened from context menu)
+    # ------------------------------------------------------------------
+
+    def _open_module_properties(self, mod_idx: int):
+        """Open the module properties dialog for the block at *mod_idx*."""
+        from ui.properties_dialog import ModulePropertiesDialog
+
+        mod = self.modules[mod_idx]
+        dlg = ModulePropertiesDialog(
+            name=mod.get('name', ''),
+            colour=mod.get('color', DEFAULT_MODULE_COLOR),
+            parent=self,
+        )
+        if dlg.exec():
+            self._save_undo()
+            mod['name'] = dlg.module_name
+            mod['color'] = dlg.colour
+            self._notify_design_changed()
+            self.update()
+
+    def _open_wire_properties(self, wire_idx: int):
+        """Open the wire properties dialog for the signal at *wire_idx*."""
+        from ui.properties_dialog import WirePropertiesDialog
+
+        sig = self.signals[wire_idx]
+        dlg = WirePropertiesDialog(
+            name=sig.get('name', ''),
+            colour=sig.get('color', DEFAULT_WIRE_COLOR),
+            parent=self,
+        )
+        if dlg.exec():
+            self._save_undo()
+            sig['name'] = dlg.signal_name
+            sig['color'] = dlg.colour
+            self._notify_design_changed()
+            self.update()
+
+    def _open_selection_properties(self):
+        """Open a multi-selection properties dialog for all selected objects.
+
+        Only the properties common to every selected object are shown.
+        Changes are applied to all selected modules and wires at once.
+        """
+        from ui.properties_dialog import MultiPropertiesDialog
+
+        sel_mods = [self.modules[i] for i in sorted(self.selected_modules)]
+        sel_wires = [self.signals[i] for i in sorted(self.selected_wires)]
+        if not sel_mods and not sel_wires:
+            return
+
+        # Determine the initial colour: use the shared colour if all
+        # objects agree, otherwise fall back to the first object's colour.
+        all_objects = sel_mods + sel_wires
+        first_colour = all_objects[0].get(
+            'color', DEFAULT_MODULE_COLOR if sel_mods else DEFAULT_WIRE_COLOR)
+        default_colour = list(first_colour)
+
+        dlg = MultiPropertiesDialog(
+            modules=sel_mods,
+            wires=sel_wires,
+            default_colour=default_colour,
+            parent=self,
+        )
+        if dlg.exec():
+            self._save_undo()
+            new_colour = dlg.colour
+            # Apply colour to every selected object
+            for mod in sel_mods:
+                mod['color'] = list(new_colour)
+            for sig in sel_wires:
+                sig['color'] = list(new_colour)
+            # Apply name if the dialog showed a single-object name field
+            if dlg.module_name is not None and sel_mods:
+                sel_mods[0]['name'] = dlg.module_name
+            if dlg.signal_name is not None and sel_wires:
+                sel_wires[0]['name'] = dlg.signal_name
+            self._notify_design_changed()
+            self.update()
+
+    # ------------------------------------------------------------------
+    # Context menu (right-click)
+    # ------------------------------------------------------------------
+
+    def contextMenuEvent(self, event):
+        """Show a right-click context menu with Properties and zoom sections."""
+        # QContextMenuEvent uses pos(), not position()
+        sx, sy = event.pos().x(), event.pos().y()
+        raw_pos = (int((sx - self.offset_x) / self.zoom),
+                   int((sy - self.offset_y) / self.zoom))
+        menu = QMenu(self)
+
+        # Section 1 — Properties
+        # If multiple objects are selected, offer multi-select properties.
+        # Otherwise, use the object under the cursor.
+        has_selection = bool(self.selected_modules or self.selected_wires)
+        hit_mod = self._hit_test_module(raw_pos)
+        hit_wire = self._hit_test_wire(raw_pos)
+
+        if has_selection:
+            total = len(self.selected_modules) + len(self.selected_wires)
+            props_action = menu.addAction(
+                f"Properties ({total} object{'s' if total > 1 else ''})…")
+            props_action.triggered.connect(self._open_selection_properties)
+        elif hit_mod is not None:
+            props_action = menu.addAction("Properties…")
+            props_action.triggered.connect(
+                lambda checked=False, idx=hit_mod: self._open_module_properties(idx))
+        elif hit_wire is not None:
+            props_action = menu.addAction("Properties…")
+            props_action.triggered.connect(
+                lambda checked=False, idx=hit_wire: self._open_wire_properties(idx))
+        else:
+            placeholder = menu.addAction("Properties…")
+            placeholder.setEnabled(False)
+
+        menu.addSeparator()
+
+        # Section 2 — placeholder for future features
+        future2 = menu.addAction("(Future)")
+        future2.setEnabled(False)
+
+        menu.addSeparator()
+
+        # Section 3 — Zoom submenu (opens on hover, to the right)
+        zoom_submenu = QMenu("Zoom", self)
+        zoom_widget = _ZoomWidget(self.zoom, parent=zoom_submenu)
+        zoom_widget.reset_zoom_clicked.connect(
+            lambda: (self._set_zoom(1.0), menu.close()))
+        zoom_widget.recenter_clicked.connect(
+            lambda: (self.optimal_recenter(), menu.close()))
+        wa = QWidgetAction(zoom_submenu)
+        wa.setDefaultWidget(zoom_widget)
+        zoom_submenu.addAction(wa)
+        menu.addMenu(zoom_submenu)
+
+        menu.exec(event.globalPos())
+
+    def _set_zoom(self, value: float) -> None:
+        """Set the zoom level and repaint."""
+        self.zoom = value
+        self.update()
+
+
+# ---------------------------------------------------------------------------
+# Zoom widget — embedded inside the context-menu Zoom submenu
+# ---------------------------------------------------------------------------
+
+from PySide6.QtCore import Signal  # noqa: E402 (grouped with runtime needs)
+
+
+class _ZoomWidget(QFrame):
+    """Compact widget showing current zoom and quick-action buttons.
+
+    Embedded in the context menu's Zoom submenu via QWidgetAction so it
+    appears on hover without requiring a separate dialog window.
+    """
+
+    reset_zoom_clicked = Signal()
+    recenter_clicked = Signal()
+
+    def __init__(self, current_zoom: float, *, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.NoFrame)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+
+        # Current zoom display
+        pct = current_zoom * 100
+        self._zoom_label = QLabel(f"Current zoom: {pct:.1f} %")
+        layout.addWidget(self._zoom_label)
+
+        # Action buttons
+        btn_row = QHBoxLayout()
+
+        self._btn_100 = QPushButton("Reset to 100 %")
+        self._btn_100.clicked.connect(self.reset_zoom_clicked.emit)
+        btn_row.addWidget(self._btn_100)
+
+        self._btn_recenter = QPushButton("Optimal recenter")
+        self._btn_recenter.clicked.connect(self.recenter_clicked.emit)
+        btn_row.addWidget(self._btn_recenter)
+
+        layout.addLayout(btn_row)

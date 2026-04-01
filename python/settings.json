@@ -1,6 +1,8 @@
 {
+  "grid_dot_size": 1.0,
+  "grid_max_dots": 20,
   "pan_hz": 120,
   "pan_vsync": true,
   "show_fps": true,
-  "show_grid": false
+  "show_grid": true
 }

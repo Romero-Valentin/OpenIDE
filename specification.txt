@@ -12,13 +12,20 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Module coordinates are integer only.
 
 2.2 Grids
-	- Visible grid: every position that is a multiple of 100 displays a small dot.
-	  The grid is dynamically generated based on the current viewport (only visible
-	  grid points are drawn).  Dots are drawn at a fixed screen-pixel size (3 px
-	  radius) so they remain visible at every zoom level.
+	- Visible grid: every position that is a multiple of the effective grid
+	  spacing displays a dot.  The base spacing is 100 world units; when
+	  zoomed far out, spacing automatically increases to the smallest
+	  multiple of 100 that keeps at most N dots per row and N dots per
+	  column visible at once (default N = 20).
+	  Dot radius is a fixed screen-pixel size so dots remain the same
+	  visual size regardless of the current zoom level.  The radius is
+	  configurable via a spinbox in the Options dialog (range 0.5–10.0 px,
+	  step 0.5, default 1.0).
 	  Grid visibility can be toggled in the Options dialog
-	  (Project → Options → Display).  Default is ON.  The setting is persisted
-	  in settings.json.
+	  (Project → Options → Display).  Default is ON.
+	  The maximum dots per axis (N) can be adjusted via a spinbox in the
+	  same Display section (range 5–100, default 20).
+	  All three grid settings are persisted in settings.json.
 	- Module position grid (invisible): module positions snap to a 100-unit grid.
 	- Module size grid (invisible): module width and height snap to a 100-unit grid.
 	- Port grid (invisible): ports always snap to the 100-unit grid so wires can connect.
@@ -31,12 +38,20 @@ The application provides a graphical interface for adding modules, wiring signal
 	- Each wire is saved as a list of integer coordinates to retrace the whole wire.
 	- Wires can only be placed at positions that are multiples of 100.
 	- Wires are not automatically connected; user interaction is required.
+	- Each wire stores the following editable properties:
+	  • signal name: displayed on the canvas at the midpoint of the wire
+	    path.  Always visible (not only when selected).  Initially empty.
+	    Editable via right-click → Properties.
+	  • color: the line colour of the wire (default blue [0, 0, 255]).
+	    Editable via right-click → Properties, with the same 10 presets
+	    and custom RGB picker as modules.
 
 2.4 VHDL Block (Module) — Properties
 	Each block stores the following properties:
 	- library: defaults to "work".
 	- entity: inherited from the VHDL entity declaration.
 	- instance name: user-defined, defaults to "U_N" (N = lowest unused integer starting from 0).
+	  Editable via right-click → Properties.
 	- position (x, y): snapped to the 100-unit grid.
 	- size (width, height): snapped to the 100-unit grid. Default size is 300 × 500.
 	  On import, the block is automatically enlarged so that:
@@ -45,7 +60,10 @@ The application provides a graphical interface for adding modules, wiring signal
 	      the longest right-side port name, and the wider of the instance
 	      name or entity name, plus 50 units of padding,
 	    • port-name labels do not overlap.
-	- color: the fill colour of the block (default green).
+	- color: the fill colour of the block (default green [0, 200, 0]).
+	  Editable via right-click → Properties, which offers 10 preset colours
+	  (Green, Red, Blue, Cyan, Purple, White, Grey, Yellow, Orange, Wood)
+	  and a custom RGB colour picker.
 	- ports: list of port definitions inherited from the VHDL entity (see §2.5).
 
 2.5 VHDL Block — Ports
@@ -183,12 +201,44 @@ The application provides a graphical interface for adding modules, wiring signal
 	- After a paste, only the newly pasted objects are selected.
 	- The paste operation is recorded as a single undoable action.
 
+2.12 Context Menu (Right-Click)
+	- Right-clicking anywhere on the canvas opens a context menu with three
+	  sections separated by dividers:
+	  1. Properties… — context-sensitive:
+	     • If objects (modules and/or wires) are currently selected, the
+	       action label shows the count (e.g. "Properties (3 objects)…")
+	       and opens a **multi-selection properties dialog** displaying
+	       only the properties common to all selected objects.  Colour is
+	       always shown (both modules and wires have colour).  Instance
+	       name is shown only when exactly one module is selected (no
+	       wires).  Signal name is shown only when exactly one wire is
+	       selected (no modules).  Confirming the dialog applies the
+	       new values to every selected object at once.
+	     • If nothing is selected, the object under the cursor is used:
+	       a module shows its instance name and fill colour; a wire shows
+	       its signal name and wire colour.  Both dialogs offer 10 preset
+	       colours (Green, Red, Blue, Cyan, Purple, White, Grey, Yellow,
+	       Orange, Wood) and a custom RGB picker.
+	     • If the cursor is over empty space and nothing is selected,
+	       the action is greyed out.
+	     Changing a property is recorded as a single undoable action.
+	  2. (Future) — reserved placeholder, greyed out.
+	  3. Zoom — a submenu that opens to the right on hover.  The user
+	     can move the mouse onto the submenu panel which displays:
+		• The current zoom level as a percentage.
+		• A "Reset to 100 %" button that sets the zoom to 1.0.
+		• An "Optimal recenter" button that fits all objects in view
+		  (same behaviour as the toolbar button, see §2.9).
+
 3. Technical Requirements
 
 3.1 Drawing & Performance
 	- All graphics are vector-based for high performance and scalability.
-	- All in-canvas text (labels, port names) uses a world-coordinate font size of 48 units,
-	  so it scales naturally with zoom and is proportionate to the module blocks.
+	- All in-canvas text (labels, port names, wire names) uses a world-coordinate
+	  font size (default 48 units), so it scales naturally with zoom and is
+	  proportionate to the module blocks.  The font size is configurable via
+	  the Options dialog (Project → Options → Display, range 8–200, default 48).
+	  The setting is persisted in settings.json.
 	- User can zoom and unzoom the workspace for detailed or overview editing.
 	- Zoom and unzoom are centred on the mouse cursor position.
 	- Zoom uses a multiplicative factor (×1.15 per scroll step) so it feels

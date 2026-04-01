@@ -284,6 +284,12 @@ class MainWindow(QMainWindow):
                 pass
         self.designer_widget.show_fps = self._settings.get("show_fps", False)
         self.designer_widget.show_grid = self._settings.get("show_grid", True)
+        self.designer_widget.grid_max_dots = self._settings.get(
+            "grid_max_dots", 20)
+        self.designer_widget.grid_dot_size = self._settings.get(
+            "grid_dot_size", 1.0)
+        self.designer_widget.font_size = self._settings.get(
+            "font_size", 48)
         # Pan tick rate (VSync is the default)
         pan_vsync = self._settings.get("pan_vsync", True)
         pan_hz = self._settings.get("pan_hz", 120)
@@ -295,6 +301,9 @@ class MainWindow(QMainWindow):
         """Persist current application settings to disk."""
         self._settings["show_fps"] = self.designer_widget.show_fps
         self._settings["show_grid"] = self.designer_widget.show_grid
+        self._settings["grid_max_dots"] = self.designer_widget.grid_max_dots
+        self._settings["grid_dot_size"] = self.designer_widget.grid_dot_size
+        self._settings["font_size"] = self.designer_widget.font_size
         self._settings["pan_hz"] = self.designer_widget._pan_hz
         self._settings["pan_vsync"] = self.designer_widget._pan_vsync
         os.makedirs(os.path.dirname(_SETTINGS_PATH) or ".", exist_ok=True)
@@ -309,6 +318,9 @@ class MainWindow(QMainWindow):
             self._keybindings,
             show_fps=self.designer_widget.show_fps,
             show_grid=self.designer_widget.show_grid,
+            grid_max_dots=self.designer_widget.grid_max_dots,
+            grid_dot_size=self.designer_widget.grid_dot_size,
+            font_size=self.designer_widget.font_size,
             pan_hz=self.designer_widget._pan_hz,
             pan_vsync=self.designer_widget._pan_vsync,
             parent=self,
@@ -316,6 +328,9 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             # Apply display settings
             self.designer_widget.show_grid = dlg.show_grid
+            self.designer_widget.grid_max_dots = dlg.grid_max_dots
+            self.designer_widget.grid_dot_size = dlg.grid_dot_size
+            self.designer_widget.font_size = dlg.font_size
             # Apply FPS overlay toggle
             self.designer_widget.show_fps = dlg.show_fps
             # Apply pan tick rate
